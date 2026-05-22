@@ -62,6 +62,8 @@ const STAGE_CONFIG: Record<string, { label: string; color: string; icon: typeof 
   test_sent: { label: "Test Sent", color: "bg-cyan-100 text-cyan-700", icon: Send },
   test_completed: { label: "Test Done", color: "bg-teal-100 text-teal-700", icon: CheckCircle2 },
   shortlisted: { label: "Shortlisted", color: "bg-green-100 text-green-700", icon: CheckCircle2 },
+  mock_interview_assigned: { label: "Mock Interview", color: "bg-indigo-100 text-indigo-700", icon: Brain },
+  mock_interview_completed: { label: "Mock Done", color: "bg-violet-100 text-violet-700", icon: CheckCircle2 },
   interview_scheduled: { label: "Interview", color: "bg-emerald-100 text-emerald-700", icon: Calendar },
   error: { label: "Error", color: "bg-red-100 text-red-700", icon: AlertCircle },
 };
@@ -207,6 +209,11 @@ export default function JobDetailPage() {
   const [interviewSelectedIds, setInterviewSelectedIds] = useState<Set<string>>(new Set());
   const [interviewPickerOpen, setInterviewPickerOpen] = useState(false);
 
+  const [mockTopN, setMockTopN] = useState(5);
+  const [mockSelectedIds, setMockSelectedIds] = useState<Set<string>>(new Set());
+  const [mockPickerOpen, setMockPickerOpen] = useState(false);
+  const [mockSendEmail, setMockSendEmail] = useState(true);
+
   const toggleTestCandidate = (id: string) => {
     setTestSelectedIds((prev) => {
       const next = new Set(prev);
@@ -217,6 +224,14 @@ export default function JobDetailPage() {
 
   const toggleInterviewCandidate = (id: string) => {
     setInterviewSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleMockCandidate = (id: string) => {
+    setMockSelectedIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id); else next.add(id);
       return next;
@@ -631,6 +646,50 @@ export default function JobDetailPage() {
                 >
                   {actionLoading === "rank" ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
                   Compute Rankings
+                </Button>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Brain className="h-4 w-4" /> 4b. Assign Mock Interview
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <p className="text-sm text-muted-foreground">Generate personalized AI voice mock interviews from resume + job data.</p>
+                <CandidatePicker
+                  candidates={rankedCandidates}
+                  selectedIds={mockSelectedIds}
+                  onToggle={toggleMockCandidate}
+                  topN={mockTopN}
+                  onSetTopN={setMockTopN}
+                  onApplyTopN={() => {
+                    const top = rankedCandidates.slice(0, mockTopN);
+                    setMockSelectedIds(new Set(top.map((c) => c.id)));
+                  }}
+                  open={mockPickerOpen}
+                  onToggleOpen={() => setMockPickerOpen(!mockPickerOpen)}
+                />
+                <label className="flex items-center gap-2 text-sm">
+                  <Checkbox checked={mockSendEmail} onCheckedChange={(v) => setMockSendEmail(!!v)} />
+                  Send email invite to candidate portal
+                </label>
+                <Button
+                  variant="outline"
+                  className="w-full"
+                  disabled={mockSelectedIds.size === 0 || actionLoading === "Assigning mock interviews"}
+                  onClick={() => runAction("Assigning mock interviews", () =>
+                    api.assignMockInterview({
+                      job_id: jobId,
+                      candidate_ids: [...mockSelectedIds],
+                      interview_type: "Mixed",
+                      question_count: 5,
+                      send_email: mockSendEmail,
+                    })
+                  )}
+                >
+                  Assign to {mockSelectedIds.size} Candidate{mockSelectedIds.size !== 1 ? "s" : ""}
                 </Button>
               </CardContent>
             </Card>

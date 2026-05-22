@@ -25,6 +25,8 @@ const STAGE_ORDER = [
   "test_sent",
   "test_completed",
   "shortlisted",
+  "mock_interview_assigned",
+  "mock_interview_completed",
   "interview_scheduled",
   "error",
 ];
@@ -38,6 +40,8 @@ const STAGE_CONFIG: Record<string, { label: string; color: string; bg: string }>
   test_sent: { label: "Test Sent", color: "border-cyan-300", bg: "bg-cyan-50" },
   test_completed: { label: "Test Done", color: "border-teal-300", bg: "bg-teal-50" },
   shortlisted: { label: "Shortlisted", color: "border-green-300", bg: "bg-green-50" },
+  mock_interview_assigned: { label: "Mock Assigned", color: "border-indigo-300", bg: "bg-indigo-50" },
+  mock_interview_completed: { label: "Mock Done", color: "border-violet-300", bg: "bg-violet-50" },
   interview_scheduled: { label: "Interview", color: "border-emerald-300", bg: "bg-emerald-50" },
   error: { label: "Error", color: "border-red-300", bg: "bg-red-50" },
 };

@@ -3,7 +3,7 @@ import re
 import logging
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, BackgroundTasks
 import pandas as pd
-from app.database import get_supabase
+from app.firestore_repo import get_db
 from app.schemas.candidate import CandidateResponse, CandidateListResponse, PipelineStageUpdate
 from app.services.resume_service import process_resumes_for_job, process_single_resume
 from app.services.github_service import analyze_github_for_job
@@ -22,6 +22,8 @@ PIPELINE_STAGES = [
     "test_sent",
     "test_completed",
     "shortlisted",
+    "mock_interview_assigned",
+    "mock_interview_completed",
     "interview_scheduled",
     "error",
 ]
@@ -53,7 +55,6 @@ async def upload_candidates(
                 found_sheets.append((sheet_name, sheet_df, cols))
                 logger.info(f"Sheet '{sheet_name}' has test columns: {cols}")
         if found_sheets:
-            # Prefer a non-first sheet (dedicated test sheet) over the main data sheet
             chosen = found_sheets[-1] if len(found_sheets) > 1 else found_sheets[0]
             test_scores_df = chosen[1]
             test_scores_df.columns = chosen[2]
@@ -103,7 +104,7 @@ async def upload_candidates(
                 if key_name:
                     test_lookup[("name", key_name)] = entry
 
-    db = get_supabase()
+    db = get_db()
     candidates_created = []
     test_inserted = 0
 
@@ -123,7 +124,7 @@ async def upload_candidates(
             "pipeline_stage": "uploaded",
             "status_message": "Uploaded, awaiting processing",
         }
-        result = db.table("candidates").insert(candidate_data).execute()
+        result = db.insert("candidates", candidate_data)
         if result.data:
             candidates_created.append(result.data[0])
             cid = result.data[0]["id"]
@@ -156,7 +157,7 @@ async def upload_candidates(
 
             if test_entry:
                 test_data = {"candidate_id": cid, "job_id": job_id, **test_entry}
-                db.table("test_results").upsert(test_data, on_conflict="candidate_id").execute()
+                db.upsert("test_results", cid, test_data)
                 test_inserted += 1
                 logger.info(f"Inserted test scores for {candidate_data['name']}: {test_entry}")
 
@@ -177,21 +178,16 @@ async def list_candidates(
     limit: int = 100,
     offset: int = 0,
 ):
-    db = get_supabase()
-    query = db.table("candidates").select("*", count="exact")
+    db = get_db()
+    filters = []
     if job_id:
-        query = query.eq("job_id", job_id)
+        filters.append(("job_id", "eq", job_id))
     if stage:
-        query = query.eq("pipeline_stage", stage)
-    query = query.order("created_at", desc=False)
-    query = query.range(offset, offset + limit - 1)
-    result = query.execute()
+        filters.append(("pipeline_stage", "eq", stage))
+    result = db.query("candidates", filters=filters or None, order_by="created_at", limit=limit, offset=offset)
 
     candidate_ids = [row["id"] for row in result.data]
-    scores_map = {}
-    if candidate_ids:
-        scores_result = db.table("scores").select("*").in_("candidate_id", candidate_ids).execute()
-        scores_map = {s["candidate_id"]: s for s in scores_result.data}
+    scores_map = db.get_candidate_with_scores(candidate_ids)
 
     candidates = []
     for row in result.data:
@@ -203,17 +199,10 @@ async def list_candidates(
 
 @router.get("/pipeline/summary")
 async def pipeline_summary(job_id: str):
-    db = get_supabase()
+    db = get_db()
     summary = {}
     for stage in PIPELINE_STAGES:
-        result = (
-            db.table("candidates")
-            .select("id", count="exact")
-            .eq("job_id", job_id)
-            .eq("pipeline_stage", stage)
-            .execute()
-        )
-        summary[stage] = result.count or 0
+        summary[stage] = db.count("candidates", filters=[("job_id", "eq", job_id), ("pipeline_stage", "eq", stage)])
     return {"job_id": job_id, "stages": summary}
 
 
@@ -221,9 +210,9 @@ async def pipeline_summary(job_id: str):
 async def update_pipeline_stage(update: PipelineStageUpdate):
     if update.stage not in PIPELINE_STAGES:
         raise HTTPException(status_code=400, detail=f"Invalid stage. Must be one of: {PIPELINE_STAGES}")
-    db = get_supabase()
+    db = get_db()
     for cid in update.candidate_ids:
-        db.table("candidates").update({"pipeline_stage": update.stage}).eq("id", cid).execute()
+        db.update("candidates", cid, {"pipeline_stage": update.stage})
     return {"message": f"Updated {len(update.candidate_ids)} candidates to stage '{update.stage}'"}
 
 
@@ -241,25 +230,25 @@ async def trigger_github_analysis(job_id: str, background_tasks: BackgroundTasks
 
 @router.post("/{candidate_id}/retry-resume")
 async def retry_resume(candidate_id: str, background_tasks: BackgroundTasks):
-    db = get_supabase()
-    result = db.table("candidates").select("*").eq("id", candidate_id).execute()
+    db = get_db()
+    result = db.get_by_id("candidates", candidate_id)
     if not result.data:
         raise HTTPException(status_code=404, detail="Candidate not found")
     candidate = result.data[0]
 
     async def _retry():
         try:
-            db.table("candidates").update({
+            db.update("candidates", candidate_id, {
                 "pipeline_stage": "uploaded",
                 "status_message": "Retrying resume processing...",
-            }).eq("id", candidate_id).execute()
+            })
             updates = await process_single_resume(candidate)
-            db.table("candidates").update(updates).eq("id", candidate_id).execute()
+            db.update("candidates", candidate_id, updates)
         except Exception as e:
-            db.table("candidates").update({
+            db.update("candidates", candidate_id, {
                 "pipeline_stage": "error",
                 "status_message": f"Resume retry failed: {e}",
-            }).eq("id", candidate_id).execute()
+            })
 
     background_tasks.add_task(_retry)
     return {"message": "Resume retry started"}
@@ -267,8 +256,8 @@ async def retry_resume(candidate_id: str, background_tasks: BackgroundTasks):
 
 @router.post("/{candidate_id}/retry-evaluation")
 async def retry_evaluation(candidate_id: str, background_tasks: BackgroundTasks):
-    db = get_supabase()
-    result = db.table("candidates").select("*").eq("id", candidate_id).execute()
+    db = get_db()
+    result = db.get_by_id("candidates", candidate_id)
     if not result.data:
         raise HTTPException(status_code=404, detail="Candidate not found")
     candidate = result.data[0]
@@ -279,23 +268,23 @@ async def retry_evaluation(candidate_id: str, background_tasks: BackgroundTasks)
 
 @router.delete("/{candidate_id}")
 async def delete_candidate(candidate_id: str):
-    db = get_supabase()
-    db.table("evaluations").delete().eq("candidate_id", candidate_id).execute()
-    db.table("scores").delete().eq("candidate_id", candidate_id).execute()
-    db.table("test_results").delete().eq("candidate_id", candidate_id).execute()
-    db.table("interviews").delete().eq("candidate_id", candidate_id).execute()
-    db.table("email_logs").delete().eq("candidate_id", candidate_id).execute()
-    db.table("candidates").delete().eq("id", candidate_id).execute()
+    db = get_db()
+    db.delete_where("evaluations", "candidate_id", candidate_id)
+    db.delete_where("scores", "candidate_id", candidate_id)
+    db.delete("test_results", candidate_id)
+    db.delete_where("scheduled_interviews", "candidate_id", candidate_id)
+    db.delete_where("email_logs", "candidate_id", candidate_id)
+    db.delete("candidates", candidate_id)
     return {"status": "deleted"}
 
 
 @router.get("/{candidate_id}", response_model=CandidateResponse)
 async def get_candidate(candidate_id: str):
-    db = get_supabase()
-    result = db.table("candidates").select("*").eq("id", candidate_id).execute()
+    db = get_db()
+    result = db.get_by_id("candidates", candidate_id)
     if not result.data:
         raise HTTPException(status_code=404, detail="Candidate not found")
     row = result.data[0]
-    score_result = db.table("scores").select("*").eq("candidate_id", candidate_id).execute()
+    score_result = db.query("scores", filters=[("candidate_id", "eq", candidate_id)])
     row["scores"] = score_result.data[0] if score_result.data else None
     return CandidateResponse(**row)

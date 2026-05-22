@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from app.config import settings
-from app.database import get_supabase
+from app.firestore_repo import get_db
 
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
 logger = logging.getLogger(__name__)
@@ -18,7 +18,6 @@ def _get_calendar_service():
 
 
 def _generate_meet_link(candidate_name: str, job_title: str) -> str:
-    """Generate a Jitsi Meet link as a free video conferencing alternative."""
     slug = f"{job_title}-{candidate_name}".lower()
     slug = "".join(c if c.isalnum() else "-" for c in slug)
     slug = slug.strip("-")[:60]
@@ -35,8 +34,8 @@ async def schedule_interviews(
     start_hour: int = 10,
     gap_minutes: int = 15,
 ):
-    db = get_supabase()
-    job = db.table("jobs").select("title").eq("id", job_id).execute().data[0]
+    db = get_db()
+    job = db.get_by_id("jobs", job_id).data[0]
 
     service = None
     try:
@@ -50,11 +49,11 @@ async def schedule_interviews(
     slot_duration = timedelta(minutes=duration_minutes + gap_minutes)
 
     for idx, cid in enumerate(candidate_ids):
-        candidate = db.table("candidates").select("*").eq("id", cid).execute().data
-        if not candidate:
+        candidate_result = db.get_by_id("candidates", cid)
+        if not candidate_result.data:
             logger.warning(f"Candidate {cid} not found, skipping")
             continue
-        candidate = candidate[0]
+        candidate = candidate_result.data[0]
 
         start_time = current_time + (slot_duration * idx)
         end_time = start_time + timedelta(minutes=duration_minutes)
@@ -87,7 +86,7 @@ async def schedule_interviews(
             except Exception as e:
                 logger.warning(f"Calendar event creation failed for {candidate['name']}: {e}")
 
-        db.table("interviews").insert({
+        db.insert("scheduled_interviews", {
             "candidate_id": cid,
             "job_id": job_id,
             "scheduled_at": start_time.isoformat(),
@@ -95,6 +94,6 @@ async def schedule_interviews(
             "google_meet_link": meet_link,
             "calendar_event_id": calendar_event_id,
             "status": status,
-        }).execute()
-        db.table("candidates").update({"pipeline_stage": "interview_scheduled"}).eq("id", cid).execute()
+        })
+        db.update("candidates", cid, {"pipeline_stage": "interview_scheduled"})
         logger.info(f"Interview scheduled for {candidate['name']} at {start_time.isoformat()}")

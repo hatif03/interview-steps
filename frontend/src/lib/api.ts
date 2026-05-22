@@ -101,6 +101,47 @@ export const api = {
   }) => request("/interviews/send-test-emails", { method: "POST", body: JSON.stringify(data) }),
   getInterviews: (jobId: string) => request<{ interviews: Interview[]; total: number }>(`/interviews/${jobId}`),
   getEmailLogs: (jobId: string) => request<{ emails: EmailLog[]; total: number }>(`/interviews/emails/${jobId}`),
+
+  // Auth
+  registerUser: (data: { uid: string; email: string; name: string; role: string }) =>
+    request("/auth/register", { method: "POST", body: JSON.stringify(data) }),
+  getMe: (token: string) =>
+    request<AppUser>("/auth/me", { headers: { Authorization: `Bearer ${token}` } }),
+  linkCandidate: (token: string) =>
+    request("/auth/link-candidate", { method: "POST", headers: { Authorization: `Bearer ${token}` } }),
+
+  // Mock interviews
+  assignMockInterview: (data: {
+    job_id: string;
+    candidate_ids: string[];
+    interview_type?: string;
+    question_count?: number;
+    send_email?: boolean;
+  }) => request("/mock-interviews/assign", { method: "POST", body: JSON.stringify(data) }),
+  getCandidateMockInterviews: (candidateId: string) =>
+    request<{ interviews: MockInterview[]; total: number }>(`/mock-interviews/candidate/${candidateId}`),
+  getUserMockInterviews: (userId: string, email?: string) => {
+    const q = email ? `?email=${encodeURIComponent(email)}` : "";
+    return request<{ interviews: MockInterview[]; total: number }>(`/mock-interviews/user/${userId}${q}`);
+  },
+  getMockInterview: (id: string) => request<MockInterview>(`/mock-interviews/${id}`),
+  startMockSession: (interviewId: string, userId?: string) =>
+    request<{ sessionId: string; assistantMessage: string; isComplete: boolean }>(
+      `/mock-interviews/${interviewId}/sessions`,
+      { method: "POST", body: JSON.stringify({ user_id: userId }) }
+    ),
+  mockInterviewTurn: (sessionId: string, userMessage: string) =>
+    request<{ assistantMessage: string; isComplete: boolean; currentQuestionIndex: number }>(
+      `/mock-interviews/sessions/${sessionId}/turn`,
+      { method: "POST", body: JSON.stringify({ user_message: userMessage }) }
+    ),
+  mockInterviewFeedback: (sessionId: string, feedbackId?: string) =>
+    request<MockFeedback & { feedbackId: string }>(
+      `/mock-interviews/sessions/${sessionId}/feedback`,
+      { method: "POST", body: JSON.stringify({ feedback_id: feedbackId }) }
+    ),
+  getMockFeedback: (interviewId: string) =>
+    request<MockFeedback>(`/mock-interviews/feedback/${interviewId}`),
 };
 
 // Types
@@ -201,4 +242,36 @@ export interface RankingResponse {
   job_id: string;
   rankings: Array<Score & { candidates?: Candidate }>;
   total: number;
+}
+
+export interface AppUser {
+  id: string;
+  email: string;
+  name: string;
+  role: "recruiter" | "candidate";
+}
+
+export interface MockInterview {
+  id: string;
+  jobId: string;
+  candidateId: string;
+  role: string;
+  type: string;
+  level: string;
+  techstack: string[];
+  questions: string[];
+  finalized: boolean;
+  createdAt: string;
+  feedback?: MockFeedback | null;
+}
+
+export interface MockFeedback {
+  id: string;
+  interviewId: string;
+  totalScore: number;
+  categoryScores: Array<{ name: string; score: number; comment: string }>;
+  strengths: string[];
+  areasForImprovement: string[];
+  finalAssessment: string;
+  createdAt: string;
 }

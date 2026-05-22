@@ -9,17 +9,19 @@ services:
     envVars:
       - key: PORT
         value: "8000"
-      - key: SUPABASE_URL
+      - key: FIREBASE_PROJECT_ID
         sync: false
-      - key: SUPABASE_KEY
-        sync: false
-      - key: SUPABASE_SERVICE_KEY
+      - key: FIREBASE_CREDENTIALS_JSON
         sync: false
       - key: GEMINI_API_KEY
         sync: false
       - key: GOOGLE_API_KEY
         sync: false
       - key: GROQ_API_KEY
+        sync: false
+      - key: DEEPSEEK_API_KEY
+        sync: false
+      - key: DASHSCOPE_API_KEY
         sync: false
       - key: LITELLM_MODEL
         value: "gemini/gemini-2.0-flash"
