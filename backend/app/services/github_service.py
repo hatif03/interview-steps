@@ -3,9 +3,9 @@ import math
 from datetime import datetime, timezone
 import httpx
 from app.config import settings
-from app.database import get_supabase
+from app.firestore_repo import get_db
 
-DECAY_LAMBDA = 0.002  # ~346-day half-life
+DECAY_LAMBDA = 0.002
 FORK_WEIGHT = 2.0
 
 
@@ -107,8 +107,8 @@ async def analyze_github_profile(github_url: str) -> dict:
 
 
 async def analyze_github_for_job(job_id: str):
-    db = get_supabase()
-    result = db.table("candidates").select("*").eq("job_id", job_id).execute()
+    db = get_db()
+    result = db.query("candidates", filters=[("job_id", "eq", job_id)])
 
     github_results = []
     for candidate in result.data:
@@ -119,22 +119,23 @@ async def analyze_github_for_job(job_id: str):
 
         try:
             analysis = await analyze_github_profile(github_url)
-            eval_result = db.table("evaluations").select("*").eq("candidate_id", candidate["id"]).execute()
-            update_data = {"github_score": analysis["total_impact"], "explanation": {}}
+            eval_result = db.query("evaluations", filters=[("candidate_id", "eq", candidate["id"])])
             if eval_result.data:
                 existing = eval_result.data[0].get("explanation") or {}
                 existing["github_analysis"] = analysis
-                db.table("evaluations").update({
+                doc_id = eval_result.data[0]["id"]
+                db.update("evaluations", doc_id, {
                     "github_score": analysis["total_impact"],
                     "explanation": existing,
-                }).eq("candidate_id", candidate["id"]).execute()
+                })
             else:
-                db.table("evaluations").insert({
+                doc_id = f"{candidate['id']}_{job_id}"
+                db.upsert("evaluations", doc_id, {
                     "candidate_id": candidate["id"],
                     "job_id": job_id,
                     "github_score": analysis["total_impact"],
                     "explanation": {"github_analysis": analysis},
-                }).execute()
+                })
             github_results.append({"candidate_id": candidate["id"], "total_impact": analysis["total_impact"]})
         except Exception as e:
             print(f"Error analyzing GitHub for {candidate.get('name', 'unknown')}: {e}")

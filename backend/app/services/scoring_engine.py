@@ -1,10 +1,13 @@
 import numpy as np
 from scipy.stats import norm
-from app.database import get_supabase
+from app.firestore_repo import get_db
+
+
+def _score_doc_id(candidate_id: str, job_id: str) -> str:
+    return f"{candidate_id}_{job_id}"
 
 
 def z_score_to_percentile(values: list[float | None]) -> list[float]:
-    """Convert raw values to percentile scores via Z-score normalization + CDF."""
     clean = [v for v in values if v is not None]
     if len(clean) < 2:
         return [0.5 if v is not None else 0.0 for v in values]
@@ -27,7 +30,6 @@ def z_score_to_percentile(values: list[float | None]) -> list[float]:
 
 
 def normalize_to_01(values: list[float]) -> list[float]:
-    """Min-max normalize a list of values to [0, 1]."""
     if not values:
         return []
     min_v = min(values)
@@ -38,23 +40,23 @@ def normalize_to_01(values: list[float]) -> list[float]:
 
 
 async def compute_rankings(job_id: str) -> dict:
-    db = get_supabase()
+    db = get_db()
 
-    job_result = db.table("jobs").select("*").eq("id", job_id).execute()
+    job_result = db.get_by_id("jobs", job_id)
     if not job_result.data:
         raise ValueError(f"Job {job_id} not found")
     job = job_result.data[0]
     weights = job.get("weight_config", {})
 
-    candidates_result = db.table("candidates").select("*").eq("job_id", job_id).execute()
+    candidates_result = db.query("candidates", filters=[("job_id", "eq", job_id)])
     candidates = candidates_result.data
     if not candidates:
         return {"job_id": job_id, "rankings": [], "total": 0}
 
-    evals_result = db.table("evaluations").select("*").eq("job_id", job_id).execute()
+    evals_result = db.query("evaluations", filters=[("job_id", "eq", job_id)])
     evals_map = {e["candidate_id"]: e for e in evals_result.data}
 
-    tests_result = db.table("test_results").select("*").eq("job_id", job_id).execute()
+    tests_result = db.query("test_results", filters=[("job_id", "eq", job_id)])
     tests_map = {t["candidate_id"]: t for t in tests_result.data}
 
     cgpa_vals = [c.get("cgpa") for c in candidates]
@@ -114,11 +116,8 @@ async def compute_rankings(job_id: str) -> dict:
         s["rank"] = rank
 
     for s in scores_data:
-        existing = db.table("scores").select("id").eq("candidate_id", s["candidate_id"]).eq("job_id", job_id).execute()
-        if existing.data:
-            db.table("scores").update(s).eq("id", existing.data[0]["id"]).execute()
-        else:
-            db.table("scores").insert(s).execute()
-        db.table("candidates").update({"pipeline_stage": "ranked"}).eq("id", s["candidate_id"]).execute()
+        doc_id = _score_doc_id(s["candidate_id"], job_id)
+        db.upsert("scores", doc_id, s)
+        db.update("candidates", s["candidate_id"], {"pipeline_stage": "ranked"})
 
     return {"job_id": job_id, "rankings": scores_data, "total": len(scores_data)}

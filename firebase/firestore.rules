@@ -1,0 +1,9 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Backend uses service account for all writes; clients go through FastAPI.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

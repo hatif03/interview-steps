@@ -3,14 +3,20 @@ from typing import Optional
 
 
 class Settings(BaseSettings):
-    supabase_url: str = ""
-    supabase_key: str = ""
-    supabase_service_key: str = ""
+    firebase_project_id: str = ""
+    firebase_credentials_json: str = ""
+    firebase_credentials_path: str = ""
 
     litellm_model: str = "gemini/gemini-2.0-flash"
     openai_api_key: Optional[str] = None
     groq_api_key: Optional[str] = None
     gemini_api_key: Optional[str] = None
+    deepseek_api_key: Optional[str] = None
+    dashscope_api_key: Optional[str] = None
+
+    mock_turn_models: str = ""
+    mock_generate_models: str = ""
+    mock_feedback_models: str = ""
 
     embedding_model: str = "gemini-embedding-001"
 

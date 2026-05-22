@@ -3,7 +3,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timezone
 from app.config import settings
-from app.database import get_supabase
+from app.firestore_repo import get_db
 
 TEST_EMAIL_TEMPLATE = """
 <html>
@@ -38,11 +38,32 @@ INTERVIEW_EMAIL_TEMPLATE = """
     <div style="background: white; padding: 20px; border-radius: 8px; border: 1px solid #e5e7eb; margin: 20px 0;">
       <p><strong>Date & Time:</strong> {interview_time}</p>
       <p><strong>Duration:</strong> {duration} minutes</p>
-      <p><strong>Google Meet Link:</strong> <a href="{meet_link}">{meet_link}</a></p>
+      <p><strong>Video Call Link:</strong> <a href="{meet_link}">{meet_link}</a></p>
     </div>
     <p>Please join the meeting on time. We look forward to speaking with you!</p>
     <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 20px 0;">
     <p style="color: #6b7280; font-size: 12px;">This is an automated message from the AI Candidate Screening Platform.</p>
+  </div>
+</body>
+</html>
+"""
+
+MOCK_INTERVIEW_EMAIL_TEMPLATE = """
+<html>
+<body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+  <div style="background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%); padding: 30px; border-radius: 10px 10px 0 0;">
+    <h1 style="color: white; margin: 0;">Mock Interview Invitation</h1>
+  </div>
+  <div style="padding: 30px; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 0 0 10px 10px;">
+    <p>Dear <strong>{candidate_name}</strong>,</p>
+    <p>You have been invited to complete an AI-powered mock interview for the <strong>{job_title}</strong> position.</p>
+    <p>Sign in to the candidate portal with this email address to take your personalized voice interview and receive feedback.</p>
+    <div style="text-align: center; margin: 25px 0;">
+      <a href="{portal_link}" style="background: #6366f1; color: white; padding: 12px 30px; border-radius: 6px; text-decoration: none; font-weight: bold;">Go to Candidate Portal</a>
+    </div>
+    <p style="color: #6b7280; font-size: 14px;">Portal link: {portal_link}</p>
+    <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 20px 0;">
+    <p style="color: #6b7280; font-size: 12px;">Use Chrome or Edge for the best voice interview experience.</p>
   </div>
 </body>
 </html>
@@ -63,14 +84,14 @@ def _send_email(to_email: str, subject: str, html_body: str):
 
 
 def _log_email(candidate_id: str, job_id: str, email_type: str, status: str):
-    db = get_supabase()
-    db.table("email_logs").insert({
+    db = get_db()
+    db.insert("email_logs", {
         "candidate_id": candidate_id,
         "job_id": job_id,
         "email_type": email_type,
         "status": status,
         "sent_at": datetime.now(timezone.utc).isoformat(),
-    }).execute()
+    })
 
 
 async def send_test_emails(
@@ -80,14 +101,14 @@ async def send_test_emails(
     subject: str | None = None,
     body_template: str | None = None,
 ):
-    db = get_supabase()
-    job = db.table("jobs").select("title").eq("id", job_id).execute().data[0]
+    db = get_db()
+    job = db.get_by_id("jobs", job_id).data[0]
 
     for cid in candidate_ids:
-        candidate = db.table("candidates").select("*").eq("id", cid).execute().data
-        if not candidate:
+        candidate_result = db.get_by_id("candidates", cid)
+        if not candidate_result.data:
             continue
-        candidate = candidate[0]
+        candidate = candidate_result.data[0]
 
         html = TEST_EMAIL_TEMPLATE.format(
             candidate_name=candidate["name"],
@@ -99,26 +120,29 @@ async def send_test_emails(
         try:
             _send_email(candidate["email"], email_subject, html)
             _log_email(cid, job_id, "test_link", "sent")
-            db.table("candidates").update({"pipeline_stage": "test_sent"}).eq("id", cid).execute()
+            db.update("candidates", cid, {"pipeline_stage": "test_sent"})
         except Exception as e:
             print(f"Failed to send email to {candidate['email']}: {e}")
             _log_email(cid, job_id, "test_link", f"failed: {str(e)[:200]}")
 
 
 async def send_interview_emails(job_id: str, candidate_ids: list[str]):
-    db = get_supabase()
-    job = db.table("jobs").select("title").eq("id", job_id).execute().data[0]
+    db = get_db()
+    job = db.get_by_id("jobs", job_id).data[0]
 
     for cid in candidate_ids:
-        candidate = db.table("candidates").select("*").eq("id", cid).execute().data
-        if not candidate:
+        candidate_result = db.get_by_id("candidates", cid)
+        if not candidate_result.data:
             continue
-        candidate = candidate[0]
+        candidate = candidate_result.data[0]
 
-        interview = db.table("interviews").select("*").eq("candidate_id", cid).eq("job_id", job_id).execute().data
-        if not interview:
+        interview_result = db.query(
+            "scheduled_interviews",
+            filters=[("candidate_id", "eq", cid), ("job_id", "eq", job_id)],
+        )
+        if not interview_result.data:
             continue
-        interview = interview[0]
+        interview = interview_result.data[0]
 
         html = INTERVIEW_EMAIL_TEMPLATE.format(
             candidate_name=candidate["name"],
@@ -134,3 +158,30 @@ async def send_interview_emails(job_id: str, candidate_ids: list[str]):
         except Exception as e:
             print(f"Failed to send interview email to {candidate['email']}: {e}")
             _log_email(cid, job_id, "interview_invitation", f"failed: {str(e)[:200]}")
+
+
+async def send_mock_interview_invites(job_id: str, candidate_ids: list[str], interview_ids: dict[str, str]):
+    db = get_db()
+    job = db.get_by_id("jobs", job_id).data[0]
+    portal_base = f"{settings.frontend_url.rstrip('/')}/candidate"
+
+    for cid in candidate_ids:
+        candidate_result = db.get_by_id("candidates", cid)
+        if not candidate_result.data:
+            continue
+        candidate = candidate_result.data[0]
+        iid = interview_ids.get(cid, "")
+        portal_link = f"{portal_base}/interview/{iid}" if iid else portal_base
+
+        html = MOCK_INTERVIEW_EMAIL_TEMPLATE.format(
+            candidate_name=candidate["name"],
+            job_title=job["title"],
+            portal_link=portal_link,
+        )
+
+        try:
+            _send_email(candidate["email"], f"Mock Interview Invitation - {job['title']}", html)
+            _log_email(cid, job_id, "mock_interview_invite", "sent")
+        except Exception as e:
+            print(f"Failed to send mock interview email to {candidate['email']}: {e}")
+            _log_email(cid, job_id, "mock_interview_invite", f"failed: {str(e)[:200]}")

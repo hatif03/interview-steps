@@ -1,5 +1,5 @@
 import asyncio
-from app.database import get_supabase
+from app.firestore_repo import get_db
 from app.core.llm import llm_json_completion
 from app.core.embeddings import get_embedding, cosine_similarity
 from app.services.github_service import analyze_github_profile
@@ -48,8 +48,12 @@ Return ONLY valid JSON in this exact format:
 }}"""
 
 
+def _eval_doc_id(candidate_id: str, job_id: str) -> str:
+    return f"{candidate_id}_{job_id}"
+
+
 def _update_status(db, candidate_id: str, stage: str, message: str):
-    db.table("candidates").update({"pipeline_stage": stage, "status_message": message}).eq("id", candidate_id).execute()
+    db.update("candidates", candidate_id, {"pipeline_stage": stage, "status_message": message})
 
 
 async def evaluate_single_candidate(candidate: dict, job_description: str) -> dict:
@@ -65,7 +69,7 @@ async def evaluate_single_candidate(candidate: dict, job_description: str) -> di
     )
 
     try:
-        result = await llm_json_completion(prompt, EVALUATION_SYSTEM_PROMPT)
+        result = await llm_json_completion(prompt, EVALUATION_SYSTEM_PROMPT, task="screening")
         return result
     except Exception as e:
         print(f"LLM evaluation error for {candidate.get('name')}: {e}")
@@ -113,9 +117,9 @@ async def compute_semantic_scores(candidate: dict, jd_embedding: list[float]) ->
 
 
 async def run_evaluation_pipeline(job_id: str, candidate_ids: list[str] | None = None):
-    db = get_supabase()
+    db = get_db()
 
-    job_result = db.table("jobs").select("*").eq("id", job_id).execute()
+    job_result = db.get_by_id("jobs", job_id)
     if not job_result.data:
         raise ValueError(f"Job {job_id} not found")
     job = job_result.data[0]
@@ -123,11 +127,12 @@ async def run_evaluation_pipeline(job_id: str, candidate_ids: list[str] | None =
 
     jd_embedding = await get_embedding(job_description)
 
-    query = db.table("candidates").select("*").eq("job_id", job_id)
-    if candidate_ids:
-        query = query.in_("id", candidate_ids)
-    candidates_result = query.execute()
+    filters = [("job_id", "eq", job_id)]
+    candidates_result = db.query("candidates", filters=filters)
     candidates = candidates_result.data
+    if candidate_ids:
+        id_set = set(candidate_ids)
+        candidates = [c for c in candidates if c["id"] in id_set]
 
     total = len(candidates)
     for idx, candidate in enumerate(candidates, 1):
@@ -168,6 +173,7 @@ async def run_evaluation_pipeline(job_id: str, candidate_ids: list[str] | None =
             eval_data = {
                 "candidate_id": cid,
                 "job_id": job_id,
+                "candidateName": name,
                 "resume_score": round(semantic_scores.get("resume_similarity", 0), 4),
                 "project_score": round(project_score, 4),
                 "research_score": round(research_score, 4),
@@ -176,11 +182,7 @@ async def run_evaluation_pipeline(job_id: str, candidate_ids: list[str] | None =
                 "explanation": explanation,
             }
 
-            existing = db.table("evaluations").select("id").eq("candidate_id", cid).eq("job_id", job_id).execute()
-            if existing.data:
-                db.table("evaluations").update(eval_data).eq("id", existing.data[0]["id"]).execute()
-            else:
-                db.table("evaluations").insert(eval_data).execute()
+            db.upsert("evaluations", _eval_doc_id(cid, job_id), eval_data)
 
             _update_status(db, cid, "evaluated", f"Evaluation complete — JD match: {combined_jd:.0%}")
 

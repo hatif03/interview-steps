@@ -3,7 +3,7 @@ import re
 import logging
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, BackgroundTasks
 import pandas as pd
-from app.database import get_supabase
+from app.firestore_repo import get_db
 from app.services.scoring_engine import compute_rankings
 
 router = APIRouter()
@@ -11,7 +11,6 @@ logger = logging.getLogger(__name__)
 
 
 def _normalize_name(name: str) -> str:
-    """Normalize a name for fuzzy matching: lowercase, collapse whitespace, strip punctuation."""
     name = name.strip().lower()
     name = re.sub(r"[.\-_,;:'\"]", " ", name)
     name = re.sub(r"\s+", " ", name).strip()
@@ -19,8 +18,6 @@ def _normalize_name(name: str) -> str:
 
 
 def _find_test_dataframe(contents: bytes, filename: str) -> pd.DataFrame:
-    """Read the correct sheet from an Excel/CSV file that contains test_la or test_code columns.
-    Prefers the last matching sheet (dedicated test sheet) over the first (main data sheet)."""
     if filename.endswith(".csv"):
         return pd.read_csv(io.BytesIO(contents))
 
@@ -44,8 +41,7 @@ def _find_test_dataframe(contents: bytes, filename: str) -> pd.DataFrame:
 
 
 def _build_candidate_name_map(db, job_id: str) -> dict[str, str]:
-    """Build normalized-name->candidate_id map for a job, supporting fuzzy matching."""
-    r = db.table("candidates").select("id, name").eq("job_id", job_id).execute()
+    r = db.query("candidates", filters=[("job_id", "eq", job_id)])
     name_map = {}
     for c in r.data:
         key = _normalize_name(c["name"])
@@ -54,7 +50,6 @@ def _build_candidate_name_map(db, job_id: str) -> dict[str, str]:
 
 
 def _fuzzy_match_candidate(name: str, name_map: dict[str, str]) -> str | None:
-    """Try exact normalized match first, then substring/contains match as fallback."""
     norm = _normalize_name(name)
     if not norm:
         return None
@@ -106,7 +101,7 @@ async def upload_test_results(
             detail=f"File does not contain 'test_la' or 'test_code' columns. Found: {list(df.columns)}",
         )
 
-    db = get_supabase()
+    db = get_db()
     name_map = _build_candidate_name_map(db, job_id)
     logger.info(f"Candidate name map has {len(name_map)} entries: {list(name_map.keys())}")
 
@@ -141,8 +136,8 @@ async def upload_test_results(
             "test_la": test_la,
             "test_code": test_code,
         }
-        db.table("test_results").upsert(test_data, on_conflict="candidate_id").execute()
-        db.table("candidates").update({"pipeline_stage": "test_completed"}).eq("id", candidate_id).execute()
+        db.upsert("test_results", candidate_id, test_data)
+        db.update("candidates", candidate_id, {"pipeline_stage": "test_completed"})
         updated += 1
         logger.info(f"Test results for {name}: la={test_la}, code={test_code}")
 
@@ -163,7 +158,6 @@ async def backfill_test_from_candidates(
     job_id: str = Form(...),
     file: UploadFile = File(...),
 ):
-    """Re-read test scores from the original dataset and backfill test_results by name matching."""
     contents = await file.read()
     if file.filename.endswith(".csv"):
         xl_sheets = [pd.read_csv(io.BytesIO(contents))]
@@ -171,7 +165,7 @@ async def backfill_test_from_candidates(
         xl = pd.ExcelFile(io.BytesIO(contents))
         xl_sheets = [xl.parse(s) for s in xl.sheet_names]
 
-    db = get_supabase()
+    db = get_db()
     name_map = _build_candidate_name_map(db, job_id)
     updated = 0
 
@@ -193,10 +187,11 @@ async def backfill_test_from_candidates(
                 continue
             if tla is None and tco is None:
                 continue
-            db.table("test_results").upsert(
+            db.upsert(
+                "test_results",
+                cid,
                 {"candidate_id": cid, "job_id": job_id, "test_la": tla, "test_code": tco},
-                on_conflict="candidate_id",
-            ).execute()
+            )
             updated += 1
 
     if updated > 0:
@@ -207,11 +202,7 @@ async def backfill_test_from_candidates(
 
 @router.get("/results/{job_id}")
 async def get_test_results(job_id: str):
-    db = get_supabase()
-    result = (
-        db.table("test_results")
-        .select("*, candidates(name, email)")
-        .eq("job_id", job_id)
-        .execute()
-    )
-    return {"results": result.data, "total": len(result.data)}
+    db = get_db()
+    result = db.query("test_results", filters=[("job_id", "eq", job_id)])
+    enriched = db.enrich_with_candidates(result.data)
+    return {"results": enriched, "total": len(enriched)}

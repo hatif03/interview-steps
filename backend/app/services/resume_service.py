@@ -2,7 +2,7 @@ import re
 import io
 import httpx
 import pdfplumber
-from app.database import get_supabase
+from app.firestore_repo import get_db
 
 
 def extract_gdrive_file_id(url: str) -> str | None:
@@ -51,11 +51,10 @@ def _update_status(db, candidate_id: str, stage: str, message: str, extra: dict 
     payload = {"pipeline_stage": stage, "status_message": message}
     if extra:
         payload.update(extra)
-    db.table("candidates").update(payload).eq("id", candidate_id).execute()
+    db.update("candidates", candidate_id, payload)
 
 
 async def process_single_resume(candidate: dict) -> dict:
-    """Process a single candidate's resume. Returns updated fields dict or raises."""
     resume_url = candidate.get("resume_url")
     if not resume_url:
         return {"status_message": "No resume URL provided", "pipeline_stage": "uploaded"}
@@ -76,16 +75,16 @@ async def process_single_resume(candidate: dict) -> dict:
 
 
 async def process_resumes_for_job(job_id: str):
-    db = get_supabase()
-    result = db.table("candidates").select("*").eq("job_id", job_id).execute()
+    db = get_db()
+    result = db.query("candidates", filters=[("job_id", "eq", job_id)])
 
     for candidate in result.data:
         cid = candidate["id"]
         name = candidate.get("name", "unknown")
         try:
-            _update_status(db, cid, candidate.get("pipeline_stage", "uploaded"), f"Processing resume...")
+            _update_status(db, cid, candidate.get("pipeline_stage", "uploaded"), "Processing resume...")
             updates = await process_single_resume(candidate)
-            db.table("candidates").update(updates).eq("id", cid).execute()
+            db.update("candidates", cid, updates)
         except Exception as e:
             _update_status(db, cid, "error", f"Resume processing failed: {e}")
             print(f"Error processing resume for {name}: {e}")

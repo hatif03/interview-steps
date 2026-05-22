@@ -1,5 +1,5 @@
-from fastapi import APIRouter, HTTPException, BackgroundTasks
-from app.database import get_supabase
+from fastapi import APIRouter, BackgroundTasks
+from app.firestore_repo import get_db
 from app.schemas.interview import InterviewScheduleRequest, EmailRequest
 from app.services.calendar_service import schedule_interviews
 from app.services.email_service import send_test_emails, send_interview_emails
@@ -43,25 +43,15 @@ async def send_interview_invitation_emails(job_id: str, candidate_ids: list[str]
 
 @router.get("/{job_id}")
 async def get_interviews(job_id: str):
-    db = get_supabase()
-    result = (
-        db.table("interviews")
-        .select("*, candidates(name, email)")
-        .eq("job_id", job_id)
-        .order("scheduled_at", desc=False)
-        .execute()
-    )
-    return {"interviews": result.data, "total": len(result.data)}
+    db = get_db()
+    result = db.query("scheduled_interviews", filters=[("job_id", "eq", job_id)], order_by="scheduled_at")
+    enriched = db.enrich_with_candidates(result.data)
+    return {"interviews": enriched, "total": len(enriched)}
 
 
 @router.get("/emails/{job_id}")
 async def get_email_logs(job_id: str):
-    db = get_supabase()
-    result = (
-        db.table("email_logs")
-        .select("*, candidates(name, email)")
-        .eq("job_id", job_id)
-        .order("sent_at", desc=True)
-        .execute()
-    )
-    return {"emails": result.data, "total": len(result.data)}
+    db = get_db()
+    result = db.query("email_logs", filters=[("job_id", "eq", job_id)], order_by="sent_at", order_desc=True)
+    enriched = db.enrich_with_candidates(result.data)
+    return {"emails": enriched, "total": len(enriched)}
