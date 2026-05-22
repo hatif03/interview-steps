@@ -253,25 +253,25 @@ export interface AppUser {
 
 export interface MockInterview {
   id: string;
-  jobId: string;
-  candidateId: string;
+  job_id: string;
+  candidate_id: string;
   role: string;
   type: string;
   level: string;
   techstack: string[];
   questions: string[];
   finalized: boolean;
-  createdAt: string;
+  created_at: string;
   feedback?: MockFeedback | null;
 }
 
 export interface MockFeedback {
   id: string;
-  interviewId: string;
-  totalScore: number;
-  categoryScores: Array<{ name: string; score: number; comment: string }>;
+  interview_id: string;
+  total_score: number;
+  category_scores: Array<{ name: string; score: number; comment: string }>;
   strengths: string[];
-  areasForImprovement: string[];
-  finalAssessment: string;
-  createdAt: string;
+  areas_for_improvement: string[];
+  final_assessment: string;
+  created_at: string;
 }

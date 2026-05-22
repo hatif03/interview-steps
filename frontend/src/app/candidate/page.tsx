@@ -14,7 +14,7 @@ export default function CandidateDashboardPage() {
   useEffect(() => {
     if (!user) return;
     api
-      .getUserMockInterviews(user.uid, user.email || undefined)
+      .getUserMockInterviews(user.id, user.email || undefined)
       .then((res) => setInterviews(res.interviews))
       .catch(console.error)
       .finally(() => setLoading(false));

@@ -1,5 +1,5 @@
 from fastapi import APIRouter, BackgroundTasks
-from app.firestore_repo import get_db
+from app.supabase_repo import get_db
 from app.schemas.interview import InterviewScheduleRequest, EmailRequest
 from app.services.calendar_service import schedule_interviews
 from app.services.email_service import send_test_emails, send_interview_emails

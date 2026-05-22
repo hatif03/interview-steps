@@ -225,8 +225,11 @@ Default weights (configurable per job via frontend sliders):
 jobs ──1:N──▶ candidates ──1:1──▶ evaluations
                          ──1:1──▶ scores
                          ──1:1──▶ test_results
-                         ──1:N──▶ interviews
+                         ──1:N──▶ scheduled_interviews
                          ──1:N──▶ email_logs
+                         ──1:N──▶ mock_interviews ──1:N──▶ mock_sessions
+                                                   ──1:N──▶ mock_feedback
+users (auth profiles) ──1:N──▶ mock_interviews
 ```
 
 ### Key Tables
@@ -234,18 +237,22 @@ jobs ──1:N──▶ candidates ──1:1──▶ evaluations
 | Table | Purpose | Notable Columns |
 |-------|---------|-----------------|
 | `jobs` | Job postings | `weight_config` (JSONB), `description` (TEXT) |
-| `candidates` | Candidate data + pipeline state | `pipeline_stage`, `status_message`, `resume_text` |
+| `candidates` | Candidate data + pipeline state | `pipeline_stage`, `status_message`, `resume_text`, `user_id` |
 | `evaluations` | AI evaluation results | `explanation` (JSONB with LLM output + semantic scores + GitHub analysis) |
 | `scores` | Computed composite scores | `score_breakdown` (JSONB with per-dimension raw/weight/weighted) |
 | `test_results` | Uploaded test scores | `test_la`, `test_code` (FLOAT) |
-| `interviews` | Scheduled interviews | `google_meet_link`, `calendar_event_id`, `status` |
+| `scheduled_interviews` | Scheduled interviews | `google_meet_link`, `calendar_event_id`, `status` |
 | `email_logs` | Email delivery tracking | `email_type`, `status`, `sent_at` |
+| `users` | Auth profiles (Supabase Auth UID) | `email`, `name`, `role` |
+| `mock_interviews` | Personalized mock interview configs | `questions` (JSONB), `candidate_id`, `job_id` |
+| `mock_sessions` | Live voice session state | `transcript` (JSONB), `status`, `current_question_index` |
+| `mock_feedback` | Post-interview AI feedback | `total_score`, `category_scores` (JSONB) |
 
 ### Design Decisions
 
 - **Composite unique constraints**: `(candidate_id, job_id)` on `scores` and `evaluations` prevents duplicate entries; upsert pattern used throughout
 - **Cascade deletion**: Deleting a job cascades to all related candidates, evaluations, scores, test results, interviews, and email logs
-- **Row-Level Security**: Service role has full CRUD; anonymous role has read access for frontend data loading
+- **Row-Level Security**: All tables deny client access; backend uses Supabase service role key
 
 ---
 

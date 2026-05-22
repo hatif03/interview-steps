@@ -3,7 +3,7 @@ import re
 import logging
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, BackgroundTasks
 import pandas as pd
-from app.firestore_repo import get_db
+from app.supabase_repo import get_db
 from app.schemas.candidate import CandidateResponse, CandidateListResponse, PipelineStageUpdate
 from app.services.resume_service import process_resumes_for_job, process_single_resume
 from app.services.github_service import analyze_github_for_job

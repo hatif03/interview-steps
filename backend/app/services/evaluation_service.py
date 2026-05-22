@@ -1,5 +1,5 @@
 import asyncio
-from app.firestore_repo import get_db
+from app.supabase_repo import get_db
 from app.core.llm import llm_json_completion
 from app.core.embeddings import get_embedding, cosine_similarity
 from app.services.github_service import analyze_github_profile
@@ -173,7 +173,7 @@ async def run_evaluation_pipeline(job_id: str, candidate_ids: list[str] | None =
             eval_data = {
                 "candidate_id": cid,
                 "job_id": job_id,
-                "candidateName": name,
+                "candidate_name": name,
                 "resume_score": round(semantic_scores.get("resume_similarity", 0), 4),
                 "project_score": round(project_score, 4),
                 "research_score": round(research_score, 4),

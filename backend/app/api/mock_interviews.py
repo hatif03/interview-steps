@@ -5,7 +5,7 @@ from app.schemas.mock_interview import (
     StartSessionRequest,
     FeedbackRequest,
 )
-from app.firestore_repo import get_db
+from app.supabase_repo import get_db
 from app.services import mock_interview_service as svc
 
 router = APIRouter()
@@ -39,7 +39,7 @@ async def send_invites(job_id: str, candidate_ids: list[str], background_tasks: 
     db = get_db()
     interview_ids = {}
     for cid in candidate_ids:
-        ivs = db.query("mock_interviews", filters=[("candidateId", "eq", cid), ("jobId", "eq", job_id)])
+        ivs = db.query("mock_interviews", filters=[("candidate_id", "eq", cid), ("job_id", "eq", job_id)])
         if ivs.data:
             interview_ids[cid] = ivs.data[-1]["id"]
 
@@ -60,7 +60,7 @@ async def get_user_interviews(user_id: str, email: str | None = None):
     db = get_db()
     enriched = []
     for iv in interviews:
-        fb = db.query("mock_feedback", filters=[("interviewId", "eq", iv["id"])])
+        fb = db.query("mock_feedback", filters=[("interview_id", "eq", iv["id"])])
         enriched.append({**iv, "feedback": fb.data[0] if fb.data else None})
     return {"interviews": enriched, "total": len(enriched)}
 
@@ -116,9 +116,9 @@ async def get_session(session_id: str):
 @router.get("/feedback/{interview_id}")
 async def get_feedback(interview_id: str, user_id: str | None = None):
     db = get_db()
-    filters = [("interviewId", "eq", interview_id)]
+    filters = [("interview_id", "eq", interview_id)]
     if user_id:
-        filters.append(("userId", "eq", user_id))
+        filters.append(("user_id", "eq", user_id))
     result = db.query("mock_feedback", filters=filters)
     if not result.data:
         raise HTTPException(status_code=404, detail="Feedback not found")

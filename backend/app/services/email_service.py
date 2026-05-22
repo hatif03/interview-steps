@@ -3,7 +3,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timezone
 from app.config import settings
-from app.firestore_repo import get_db
+from app.supabase_repo import get_db
 
 TEST_EMAIL_TEMPLATE = """
 <html>

@@ -3,7 +3,7 @@ import math
 from datetime import datetime, timezone
 import httpx
 from app.config import settings
-from app.firestore_repo import get_db
+from app.supabase_repo import get_db
 
 DECAY_LAMBDA = 0.002
 FORK_WEIGHT = 2.0

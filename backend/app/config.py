@@ -3,9 +3,9 @@ from typing import Optional
 
 
 class Settings(BaseSettings):
-    firebase_project_id: str = ""
-    firebase_credentials_json: str = ""
-    firebase_credentials_path: str = ""
+    supabase_url: str = ""
+    supabase_service_role_key: str = ""
+    supabase_jwt_secret: str = ""
 
     litellm_model: str = "gemini/gemini-2.0-flash"
     openai_api_key: Optional[str] = None
