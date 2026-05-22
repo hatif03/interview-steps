@@ -3,7 +3,7 @@
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { api, Candidate, Evaluation, Score } from "@/lib/api";
+import { api, Candidate, Evaluation, Score, MockInterview } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
@@ -46,17 +46,20 @@ export default function CandidateDetailPage() {
   const [candidate, setCandidate] = useState<Candidate | null>(null);
   const [evaluation, setEvaluation] = useState<Evaluation | null>(null);
   const [score, setScore] = useState<Score | null>(null);
+  const [mockInterviews, setMockInterviews] = useState<MockInterview[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     Promise.all([
       api.getCandidate(candidateId),
       api.getCandidateEvaluation(candidateId),
+      api.getCandidateMockInterviews(candidateId).catch(() => ({ interviews: [] })),
     ])
-      .then(([c, evalData]) => {
+      .then(([c, evalData, mockData]) => {
         setCandidate(c);
         setEvaluation(evalData.evaluation);
         setScore(evalData.score);
+        setMockInterviews(mockData.interviews || []);
       })
       .catch(console.error)
       .finally(() => setLoading(false));
@@ -291,6 +294,43 @@ export default function CandidateDetailPage() {
         </Card>
         );
       })()}
+
+      {/* Mock Interview Feedback */}
+      {mockInterviews.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Mock Interviews</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {mockInterviews.map((iv) => (
+              <div key={iv.id} className="rounded-lg border p-4 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="font-medium">{iv.role} — {iv.type}</p>
+                    <p className="text-xs text-muted-foreground">{iv.level} · {iv.questions?.length} questions</p>
+                  </div>
+                  {iv.feedback && (
+                    <Badge className="text-base px-3">{iv.feedback.totalScore}/100</Badge>
+                  )}
+                </div>
+                {iv.feedback && (
+                  <>
+                    <p className="text-sm text-muted-foreground">{iv.feedback.finalAssessment}</p>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {iv.feedback.categoryScores?.map((cat) => (
+                        <div key={cat.name} className="text-xs flex justify-between border-b pb-1">
+                          <span>{cat.name}</span>
+                          <span className="font-mono">{cat.score}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
 
       {/* GitHub Analysis */}
       {githubAnalysis && (githubAnalysis as Record<string, unknown>).repos && (
