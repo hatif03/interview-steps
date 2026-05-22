@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException
-from app.firestore_repo import get_db
+from app.supabase_repo import get_db
 from app.schemas.job import JobCreate, JobResponse
 
 router = APIRouter()

@@ -20,6 +20,8 @@ out/
 .env.local
 .env.*.local
 backend/.env
+backend/firebase-service-account.json
+**/firebase-service-account.json
 
 # IDE
 .vscode/

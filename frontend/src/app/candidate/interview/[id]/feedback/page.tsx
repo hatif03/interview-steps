@@ -36,7 +36,7 @@ export default function FeedbackPage() {
   if (loading) return <PageSkeleton rows={4} />;
   if (!feedback) return <p className="text-destructive">Feedback not found.</p>;
 
-  const radarData = (feedback.categoryScores || []).map((c) => ({
+  const radarData = (feedback.category_scores || []).map((c) => ({
     category: c.name.replace(" and ", " & "),
     score: c.score,
     fullMark: 100,
@@ -47,7 +47,7 @@ export default function FeedbackPage() {
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-lg font-semibold">Interview Feedback</h2>
-          <p className="text-2xl font-bold text-primary mt-1">{feedback.totalScore}/100</p>
+          <p className="text-2xl font-bold text-primary mt-1">{feedback.total_score}/100</p>
         </div>
         <Link href={`/candidate/interview/${interviewId}`}>
           <Button variant="outline">Retake Interview</Button>
@@ -91,7 +91,7 @@ export default function FeedbackPage() {
           </CardHeader>
           <CardContent>
             <ul className="list-disc list-inside space-y-1 text-sm">
-              {feedback.areasForImprovement?.map((s, i) => (
+              {feedback.areas_for_improvement?.map((s, i) => (
                 <li key={i}>{s}</li>
               ))}
             </ul>
@@ -104,11 +104,11 @@ export default function FeedbackPage() {
           <CardTitle className="text-base">Final Assessment</CardTitle>
         </CardHeader>
         <CardContent>
-          <p className="text-sm leading-relaxed">{feedback.finalAssessment}</p>
+          <p className="text-sm leading-relaxed">{feedback.final_assessment}</p>
         </CardContent>
       </Card>
 
-      {feedback.categoryScores?.map((cat) => (
+      {feedback.category_scores?.map((cat) => (
         <div key={cat.name} className="flex items-start gap-3 text-sm">
           <Badge variant="secondary">{cat.score}</Badge>
           <div>

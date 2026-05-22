@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from app.config import settings
-from app.firestore_repo import get_db
+from app.supabase_repo import get_db
 
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
 logger = logging.getLogger(__name__)

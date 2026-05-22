@@ -3,7 +3,7 @@ import re
 import logging
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, BackgroundTasks
 import pandas as pd
-from app.firestore_repo import get_db
+from app.supabase_repo import get_db
 from app.services.scoring_engine import compute_rankings
 
 router = APIRouter()

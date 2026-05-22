@@ -1,8 +1,8 @@
 from fastapi import APIRouter, HTTPException, Header
 from typing import Optional
 from app.schemas.mock_interview import RegisterUserRequest
-from app.firestore_repo import get_db
-from app.database import verify_firebase_token
+from app.supabase_repo import get_db
+from app.database import verify_supabase_token
 
 router = APIRouter()
 
@@ -19,7 +19,7 @@ async def register_user(body: RegisterUserRequest):
     if body.role == "candidate":
         candidates = db.query("candidates", filters=[("email", "eq", body.email.lower())])
         for c in candidates.data:
-            db.update("candidates", c["id"], {"userId": body.uid})
+            db.update("candidates", c["id"], {"user_id": body.uid})
 
     return {"success": True, "uid": body.uid, "role": body.role}
 
@@ -31,7 +31,7 @@ async def get_me(authorization: Optional[str] = Header(None)):
 
     token = authorization.split("Bearer ", 1)[1]
     try:
-        decoded = verify_firebase_token(token)
+        decoded = verify_supabase_token(token)
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid token")
 
@@ -56,7 +56,7 @@ async def link_candidate(authorization: Optional[str] = Header(None)):
 
     token = authorization.split("Bearer ", 1)[1]
     try:
-        decoded = verify_firebase_token(token)
+        decoded = verify_supabase_token(token)
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid token")
 
@@ -69,7 +69,7 @@ async def link_candidate(authorization: Optional[str] = Header(None)):
     candidates = db.query("candidates", filters=[("email", "eq", email)])
     linked = 0
     for c in candidates.data:
-        db.update("candidates", c["id"], {"userId": uid})
+        db.update("candidates", c["id"], {"user_id": uid})
         linked += 1
 
     return {"linked": linked, "email": email}

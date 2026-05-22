@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, BackgroundTasks
-from app.firestore_repo import get_db
+from app.supabase_repo import get_db
 from app.schemas.evaluation import EvaluationRequest, RankingResponse
 from app.services.evaluation_service import run_evaluation_pipeline
 from app.services.scoring_engine import compute_rankings

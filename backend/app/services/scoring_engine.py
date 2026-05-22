@@ -1,6 +1,6 @@
 import numpy as np
 from scipy.stats import norm
-from app.firestore_repo import get_db
+from app.supabase_repo import get_db
 
 
 def _score_doc_id(candidate_id: str, job_id: str) -> str:

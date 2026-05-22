@@ -28,4 +28,4 @@ app.include_router(auth.router, prefix="/api/auth", tags=["Auth"])
 
 @app.get("/api/health")
 async def health_check():
-    return {"status": "healthy", "version": "2.0.0", "database": "firestore"}
+    return {"status": "healthy", "version": "2.0.0", "database": "supabase"}

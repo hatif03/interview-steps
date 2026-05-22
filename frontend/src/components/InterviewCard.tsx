@@ -7,7 +7,7 @@ import { MockInterview } from "@/lib/api";
 import { Calendar, Trophy } from "lucide-react";
 
 export function InterviewCard({ interview }: { interview: MockInterview }) {
-  const score = interview.feedback?.totalScore;
+  const score = interview.feedback?.total_score;
   const href = score != null
     ? `/candidate/interview/${interview.id}/feedback`
     : `/candidate/interview/${interview.id}`;
@@ -26,7 +26,7 @@ export function InterviewCard({ interview }: { interview: MockInterview }) {
           <div className="flex items-center gap-4 text-xs text-muted-foreground">
             <span className="flex items-center gap-1">
               <Calendar className="h-3 w-3" />
-              {interview.createdAt ? new Date(interview.createdAt).toLocaleDateString() : "—"}
+              {interview.created_at ? new Date(interview.created_at).toLocaleDateString() : "—"}
             </span>
             {score != null && (
               <span className="flex items-center gap-1 text-primary font-medium">

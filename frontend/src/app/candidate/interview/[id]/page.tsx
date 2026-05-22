@@ -48,7 +48,7 @@ export default function TakeInterviewPage() {
       <VoiceInterviewAgent
         interviewId={interviewId}
         userName={profile?.name || user?.email || "Candidate"}
-        userId={user?.uid}
+        userId={user?.id}
         feedbackId={feedbackId}
       />
     </div>

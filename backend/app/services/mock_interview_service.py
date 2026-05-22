@@ -6,7 +6,7 @@ import json
 from datetime import datetime, timezone
 
 from app.core.llm import llm_completion, llm_json_completion
-from app.firestore_repo import get_db
+from app.supabase_repo import get_db
 from app.services.email_service import send_mock_interview_invites
 
 INTERVIEWER_SYSTEM = """You are a professional technical interviewer conducting a voice mock interview.
@@ -85,16 +85,16 @@ Questions must be voice-friendly — no slashes, asterisks, or special character
     result = await llm_json_completion(prompt, task="generate")
 
     interview_data = {
-        "jobId": job_id,
-        "candidateId": candidate_id,
+        "job_id": job_id,
+        "candidate_id": candidate_id,
         "role": result.get("role", job["title"]),
         "type": interview_type,
         "level": result.get("level", "Mid"),
         "techstack": result.get("techstack", []),
         "questions": result.get("questions", [])[:question_count],
         "finalized": True,
-        "resumeContext": (candidate.get("resume_text") or "")[:500],
-        "createdAt": _now(),
+        "resume_context": (candidate.get("resume_text") or "")[:500],
+        "created_at": _now(),
     }
 
     inserted = db.insert("mock_interviews", interview_data)
@@ -138,15 +138,15 @@ async def start_session(mock_interview_id: str, user_id: str | None = None) -> d
     opening = f"Hello! Welcome to your mock interview for the {mi.get('role', 'position')} role. Let's begin."
 
     session_data = {
-        "mockInterviewId": mock_interview_id,
-        "candidateId": mi.get("candidateId"),
-        "jobId": mi.get("jobId"),
-        "userId": user_id,
+        "mock_interview_id": mock_interview_id,
+        "candidate_id": mi.get("candidate_id"),
+        "job_id": mi.get("job_id"),
+        "user_id": user_id,
         "transcript": [{"role": "assistant", "content": opening}],
         "status": "active",
-        "currentQuestionIndex": 0,
+        "current_question_index": 0,
         "questions": questions,
-        "startedAt": _now(),
+        "started_at": _now(),
     }
 
     result = db.insert("mock_sessions", session_data)
@@ -180,14 +180,14 @@ async def process_turn(session_id: str, user_message: str) -> dict:
         return {
             "assistantMessage": "This interview session is already complete.",
             "isComplete": True,
-            "currentQuestionIndex": session.get("currentQuestionIndex", 0),
+            "currentQuestionIndex": session.get("current_question_index", 0),
         }
 
     transcript = list(session.get("transcript", []))
     transcript.append({"role": "user", "content": user_message})
 
     questions = session.get("questions", [])
-    q_index = session.get("currentQuestionIndex", 0)
+    q_index = session.get("current_question_index", 0)
     questions_text = "\n".join(f"{i + 1}. {q}" for i, q in enumerate(questions))
 
     history = "\n".join(f"- {m['role']}: {m['content']}" for m in transcript[-12:])
@@ -219,11 +219,11 @@ Return ONLY JSON:
 
     update = {
         "transcript": transcript,
-        "currentQuestionIndex": new_index,
+        "current_question_index": new_index,
     }
     if is_complete:
         update["status"] = "completed"
-        update["endedAt"] = _now()
+        update["ended_at"] = _now()
 
     db.update("mock_sessions", session_id, update)
 
@@ -252,16 +252,16 @@ async def generate_feedback(session_id: str, feedback_id: str | None = None) -> 
     )
 
     feedback_data = {
-        "interviewId": session.get("mockInterviewId"),
-        "sessionId": session_id,
-        "candidateId": session.get("candidateId"),
-        "userId": session.get("userId"),
-        "totalScore": result.get("totalScore", 0),
-        "categoryScores": result.get("categoryScores", []),
+        "interview_id": session.get("mock_interview_id"),
+        "session_id": session_id,
+        "candidate_id": session.get("candidate_id"),
+        "user_id": session.get("user_id"),
+        "total_score": result.get("totalScore", 0),
+        "category_scores": result.get("categoryScores", []),
         "strengths": result.get("strengths", []),
-        "areasForImprovement": result.get("areasForImprovement", []),
-        "finalAssessment": result.get("finalAssessment", ""),
-        "createdAt": _now(),
+        "areas_for_improvement": result.get("areasForImprovement", []),
+        "final_assessment": result.get("finalAssessment", ""),
+        "created_at": _now(),
     }
 
     if feedback_id:
@@ -271,11 +271,11 @@ async def generate_feedback(session_id: str, feedback_id: str | None = None) -> 
         inserted = db.insert("mock_feedback", feedback_data)
         fid = inserted.data[0]["id"]
 
-    candidate_id = session.get("candidateId")
+    candidate_id = session.get("candidate_id")
     if candidate_id:
         db.update("candidates", candidate_id, {
             "pipeline_stage": "mock_interview_completed",
-            "status_message": f"Mock interview complete — score: {feedback_data['totalScore']}/100",
+            "status_message": f"Mock interview complete — score: {feedback_data['total_score']}/100",
         })
 
     return {"success": True, "feedbackId": fid, **feedback_data}
@@ -285,13 +285,13 @@ def get_candidate_mock_interviews(candidate_id: str) -> dict:
     db = get_db()
     interviews = db.query(
         "mock_interviews",
-        filters=[("candidateId", "eq", candidate_id)],
-        order_by="createdAt",
+        filters=[("candidate_id", "eq", candidate_id)],
+        order_by="created_at",
         order_desc=True,
     )
 
-    feedback_list = db.query("mock_feedback", filters=[("candidateId", "eq", candidate_id)])
-    feedback_by_interview = {f.get("interviewId"): f for f in feedback_list.data}
+    feedback_list = db.query("mock_feedback", filters=[("candidate_id", "eq", candidate_id)])
+    feedback_by_interview = {f.get("interview_id"): f for f in feedback_list.data}
 
     items = []
     for iv in interviews.data:
@@ -308,8 +308,8 @@ def get_interviews_for_user(user_id: str, email: str | None = None) -> list[dict
 
     by_user = db.query(
         "mock_interviews",
-        filters=[("userId", "eq", user_id)],
-        order_by="createdAt",
+        filters=[("user_id", "eq", user_id)],
+        order_by="created_at",
         order_desc=True,
     )
 
@@ -322,8 +322,8 @@ def get_interviews_for_user(user_id: str, email: str | None = None) -> list[dict
         for c in candidates.data:
             ivs = db.query(
                 "mock_interviews",
-                filters=[("candidateId", "eq", c["id"])],
-                order_by="createdAt",
+                filters=[("candidate_id", "eq", c["id"])],
+                order_by="created_at",
                 order_desc=True,
             )
             all_interviews.extend(ivs.data)

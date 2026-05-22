@@ -310,14 +310,14 @@ export default function CandidateDetailPage() {
                     <p className="text-xs text-muted-foreground">{iv.level} · {iv.questions?.length} questions</p>
                   </div>
                   {iv.feedback && (
-                    <Badge className="text-base px-3">{iv.feedback.totalScore}/100</Badge>
+                    <Badge className="text-base px-3">{iv.feedback.total_score}/100</Badge>
                   )}
                 </div>
                 {iv.feedback && (
                   <>
-                    <p className="text-sm text-muted-foreground">{iv.feedback.finalAssessment}</p>
+                    <p className="text-sm text-muted-foreground">{iv.feedback.final_assessment}</p>
                     <div className="grid gap-2 sm:grid-cols-2">
-                      {iv.feedback.categoryScores?.map((cat) => (
+                      {iv.feedback.category_scores?.map((cat) => (
                         <div key={cat.name} className="text-xs flex justify-between border-b pb-1">
                           <span>{cat.name}</span>
                           <span className="font-mono">{cat.score}</span>

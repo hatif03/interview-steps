@@ -1,43 +1,32 @@
-import json
-
-import firebase_admin
-from firebase_admin import credentials, firestore
+from supabase import Client, create_client
 
 from app.config import settings
 
-_app: firebase_admin.App | None = None
-_client: firestore.Client | None = None
+_client: Client | None = None
 
 
-def _init_firebase() -> firestore.Client:
-    global _app, _client
-    if _client is not None:
-        return _client
-
-    if not firebase_admin._apps:
-        cred_json = settings.firebase_credentials_json
-        if cred_json and cred_json.strip().startswith("{"):
-            cred = credentials.Certificate(json.loads(cred_json))
-        elif settings.firebase_credentials_path:
-            cred = credentials.Certificate(settings.firebase_credentials_path)
-        else:
-            cred = credentials.ApplicationDefault()
-
-        options = {}
-        if settings.firebase_project_id:
-            options["projectId"] = settings.firebase_project_id
-        _app = firebase_admin.initialize_app(cred, options or None)
-
-    _client = firestore.client()
+def get_supabase_client() -> Client:
+    global _client
+    if _client is None:
+        if not settings.supabase_url or not settings.supabase_service_role_key:
+            raise RuntimeError(
+                "SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set in backend/.env"
+            )
+        _client = create_client(settings.supabase_url, settings.supabase_service_role_key)
     return _client
 
 
-def get_firestore_client() -> firestore.Client:
-    return _init_firebase()
+def verify_supabase_token(jwt: str) -> dict:
+    client = get_supabase_client()
+    response = client.auth.get_user(jwt)
+    user = response.user
+    if not user:
+        raise ValueError("Invalid token")
 
-
-def verify_firebase_token(id_token: str) -> dict:
-    from firebase_admin import auth
-
-    _init_firebase()
-    return auth.verify_id_token(id_token)
+    metadata = user.user_metadata or {}
+    return {
+        "uid": user.id,
+        "sub": user.id,
+        "email": user.email or "",
+        "name": metadata.get("name") or metadata.get("full_name") or user.email or "",
+    }

@@ -2,7 +2,7 @@ import re
 import io
 import httpx
 import pdfplumber
-from app.firestore_repo import get_db
+from app.supabase_repo import get_db
 
 
 def extract_gdrive_file_id(url: str) -> str | None:
