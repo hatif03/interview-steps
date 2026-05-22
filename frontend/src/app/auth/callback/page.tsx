@@ -22,7 +22,11 @@ export default function AuthCallbackPage() {
         if (typeof window !== "undefined") {
           window.localStorage.removeItem("auth_role");
         }
-        router.replace(role === "recruiter" ? "/" : "/candidate");
+        if (role === "recruiter") {
+          router.replace("/recruiter/onboarding");
+        } else {
+          router.replace("/candidate/onboarding");
+        }
       } catch {
         setError("Sign-in could not be completed. Please try again.");
       }

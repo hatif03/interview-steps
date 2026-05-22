@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
-from app.api import jobs, candidates, evaluations, tests, interviews, mock_interviews, auth
+from app.api import jobs, candidates, evaluations, tests, interviews, mock_interviews, auth, public, candidate_portal
 
 app = FastAPI(
     title="AI Candidate Screening Platform",
@@ -24,6 +24,8 @@ app.include_router(tests.router, prefix="/api/tests", tags=["Tests"])
 app.include_router(interviews.router, prefix="/api/interviews", tags=["Interviews"])
 app.include_router(mock_interviews.router, prefix="/api/mock-interviews", tags=["Mock Interviews"])
 app.include_router(auth.router, prefix="/api/auth", tags=["Auth"])
+app.include_router(public.router, prefix="/api/public", tags=["Public"])
+app.include_router(candidate_portal.router, prefix="/api/candidate", tags=["Candidate Portal"])
 
 
 @app.get("/api/health")

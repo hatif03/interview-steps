@@ -6,10 +6,11 @@ import {
   useEffect,
   useState,
   ReactNode,
+  useCallback,
 } from "react";
 import type { User, Session } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
-import { api, AppUser } from "@/lib/api";
+import { api, AppUser, setAuthTokenProvider } from "@/lib/api";
 
 interface AuthContextValue {
   user: User | null;
@@ -21,6 +22,7 @@ interface AuthContextValue {
   signOut: () => Promise<void>;
   getIdToken: () => Promise<string | null>;
   completeOAuthProfile: (role: "recruiter" | "candidate") => Promise<AppUser | null>;
+  refreshProfile: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -163,10 +165,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await supabase.auth.signOut();
   };
 
-  const getIdToken = async () => {
+  const getIdToken = useCallback(async () => {
     const { data: sessionData } = await supabase.auth.getSession();
     return sessionData.session?.access_token ?? null;
-  };
+  }, []);
+
+  useEffect(() => {
+    setAuthTokenProvider(getIdToken);
+  }, [getIdToken]);
+
+  const refreshProfile = useCallback(async () => {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const u = sessionData.session?.user;
+    if (u) setProfile(await loadProfile(u));
+  }, []);
 
   return (
     <AuthContext.Provider
@@ -180,6 +192,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         signOut,
         completeOAuthProfile,
         getIdToken,
+        refreshProfile,
       }}
     >
       {children}

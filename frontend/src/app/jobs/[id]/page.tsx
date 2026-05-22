@@ -35,6 +35,8 @@ import { toast } from "sonner";
 import Link from "next/link";
 import { BackButton } from "@/components/back-button";
 import { PageSkeleton } from "@/components/loading";
+import { CopyLinkButton } from "@/components/copy-link-button";
+import { FileDropzone, downloadCsvTemplate } from "@/components/file-dropzone";
 import {
   Upload,
   Brain,
@@ -302,6 +304,19 @@ export default function JobDetailPage() {
     };
   }, [candidates, refresh]);
 
+  const handleUploadFile = async (file: File) => {
+    setActionLoading("upload");
+    try {
+      const result = await api.uploadCandidates(jobId, file);
+      toast.success(`Uploaded ${result.count} candidates. Resume processing started.`);
+      loadData();
+    } catch (err) {
+      toast.error("Upload failed: " + (err instanceof Error ? err.message : "Unknown error"));
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -476,15 +491,75 @@ export default function JobDetailPage() {
         </div>
       )}
 
-      <Tabs defaultValue="candidates" className="space-y-4">
-        <TabsList>
+      <Tabs defaultValue="overview" className="space-y-4">
+        <TabsList className="flex-wrap h-auto">
+          <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="candidates">
             Candidates ({candidates.length})
             {processingCount > 0 && <Loader2 className="ml-1.5 h-3 w-3 animate-spin" />}
           </TabsTrigger>
+          <TabsTrigger value="intake">Intake</TabsTrigger>
+          {job.apply_enabled && <TabsTrigger value="apply-form">Apply Form</TabsTrigger>}
           <TabsTrigger value="workflow">Workflow</TabsTrigger>
           <TabsTrigger value="rankings">Rankings</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="overview" className="space-y-4">
+          <div className="grid gap-4 md:grid-cols-3">
+            <Card>
+              <CardHeader className="pb-2"><CardTitle className="text-sm">Status</CardTitle></CardHeader>
+              <CardContent>
+                <Badge className="capitalize">{job.status || "draft"}</Badge>
+                {job.location && <p className="text-xs text-muted-foreground mt-2">{job.location} · {job.job_type}</p>}
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2"><CardTitle className="text-sm">Candidates</CardTitle></CardHeader>
+              <CardContent><p className="text-2xl font-bold">{candidates.length}</p></CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2"><CardTitle className="text-sm">Sources</CardTitle></CardHeader>
+              <CardContent className="text-sm space-y-1">
+                <p>Upload: {candidates.filter((c) => c.source !== "form").length}</p>
+                <p>Form: {candidates.filter((c) => c.source === "form").length}</p>
+              </CardContent>
+            </Card>
+          </div>
+          {job.apply_enabled && job.apply_slug && (
+            <Card>
+              <CardHeader><CardTitle className="text-base">Share Application Link</CardTitle></CardHeader>
+              <CardContent>
+                <CopyLinkButton url={`${typeof window !== "undefined" ? window.location.origin : ""}/apply/${job.apply_slug}`} />
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
+
+        <TabsContent value="intake" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Bulk Upload</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <FileDropzone onFile={handleUploadFile} disabled={actionLoading === "upload"} />
+              <Button variant="outline" size="sm" onClick={downloadCsvTemplate}>Download CSV template</Button>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {job.apply_enabled && (
+          <TabsContent value="apply-form">
+            <Card>
+              <CardHeader><CardTitle className="text-base">Public Apply Form</CardTitle></CardHeader>
+              <CardContent className="space-y-4">
+                <p className="text-sm text-muted-foreground">Candidates must sign in before submitting. Standard fields: college, branch, CGPA, GitHub, projects, resume.</p>
+                {job.apply_slug && (
+                  <CopyLinkButton url={`${typeof window !== "undefined" ? window.location.origin : ""}/apply/${job.apply_slug}`} />
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+        )}
 
         {/* Candidates Tab */}
         <TabsContent value="candidates">
@@ -498,6 +573,7 @@ export default function JobDetailPage() {
                     <TableHead>College</TableHead>
                     <TableHead>CGPA</TableHead>
                     <TableHead>Stage</TableHead>
+                    <TableHead>Source</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Score</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
@@ -524,6 +600,9 @@ export default function JobDetailPage() {
                             <StageIcon className="h-3 w-3" />
                             {stageConf.label}
                           </span>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className="text-xs capitalize">{c.source || "upload"}</Badge>
                         </TableCell>
                         <TableCell className="max-w-[250px]">
                           {c.status_message ? (

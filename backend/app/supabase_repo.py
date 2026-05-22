@@ -64,6 +64,20 @@ class SupabaseRepo:
         row = _row_to_dict(result.data[0] if result.data else payload)
         return QueryResult(data=[row] if row else [], count=1 if row else 0)
 
+    def upsert_by_key(self, collection: str, key_field: str, key_value: str, data: dict) -> QueryResult:
+        payload = dict(data)
+        payload[key_field] = key_value
+        if "created_at" not in payload:
+            payload["created_at"] = _now_iso()
+        result = self._table(collection).upsert(payload, on_conflict=key_field).execute()
+        row = _row_to_dict(result.data[0] if result.data else payload)
+        return QueryResult(data=[row] if row else [], count=1 if row else 0)
+
+    def get_by_field(self, collection: str, field: str, value: str) -> QueryResult:
+        result = self._table(collection).select("*").eq(field, value).limit(1).execute()
+        row = _row_to_dict(result.data[0]) if result.data else None
+        return QueryResult(data=[row] if row else [], count=1 if row else 0)
+
     def get_by_id(self, collection: str, doc_id: str) -> QueryResult:
         result = self._table(collection).select("*").eq("id", doc_id).limit(1).execute()
         row = _row_to_dict(result.data[0]) if result.data else None

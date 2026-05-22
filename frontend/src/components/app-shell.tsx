@@ -1,27 +1,33 @@
 "use client";
 
 import { usePathname } from "next/navigation";
-import { Sidebar } from "@/components/sidebar";
 import { AuthProvider } from "@/lib/auth-context";
+import { RecruiterShell } from "@/components/layouts/recruiter-shell";
+import { CandidateShell } from "@/components/layouts/candidate-shell";
+
+const BARE_PATHS = ["/sign-in", "/auth/callback", "/apply"];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const isCandidatePortal = pathname.startsWith("/candidate");
 
-  if (isCandidatePortal) {
-    return (
-      <AuthProvider>
-        <div className="min-h-screen bg-muted/30">{children}</div>
-      </AuthProvider>
-    );
-  }
+  const isBare =
+    BARE_PATHS.some((p) => pathname === p || pathname.startsWith(p + "/")) ||
+    pathname.startsWith("/apply/");
+
+  const isCandidatePortal = pathname.startsWith("/candidate");
+  const isRecruiterOnboarding = pathname.startsWith("/recruiter");
 
   return (
     <AuthProvider>
-      <Sidebar />
-      <main className="flex-1 ml-64 min-h-screen bg-muted/30">
-        <div className="p-8">{children}</div>
-      </main>
+      {isBare ? (
+        <div className="min-h-screen bg-muted/30">{children}</div>
+      ) : isCandidatePortal ? (
+        <CandidateShell>{children}</CandidateShell>
+      ) : isRecruiterOnboarding ? (
+        <RecruiterShell>{children}</RecruiterShell>
+      ) : (
+        <RecruiterShell>{children}</RecruiterShell>
+      )}
     </AuthProvider>
   );
 }

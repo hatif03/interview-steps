@@ -15,6 +15,7 @@ import { PageSkeleton } from "@/components/loading";
 import { RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
+import { motion } from "framer-motion";
 
 const STAGE_ORDER = [
   "uploaded",
@@ -142,9 +143,15 @@ export default function PipelinePage() {
                     <Badge variant="secondary" className="text-xs">{stageCandidates.length}</Badge>
                   </div>
                   <div className="space-y-2 max-h-[60vh] overflow-y-auto">
-                    {stageCandidates.map((c) => (
+                    {stageCandidates.map((c, i) => (
                       <Link key={c.id} href={`/candidates/${c.id}`}>
-                        <div className="bg-white rounded-md p-3 border shadow-sm hover:shadow-md transition-shadow cursor-pointer">
+                        <motion.div
+                          layout
+                          initial={{ opacity: 0, y: 8 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ delay: i * 0.03 }}
+                          className="bg-white dark:bg-card rounded-md p-3 border shadow-sm hover:shadow-md transition-shadow cursor-pointer"
+                        >
                           <p className="font-medium text-sm">{c.name}</p>
                           <p className="text-xs text-muted-foreground">{c.college || c.branch || c.email}</p>
                           {c.status_message && (
@@ -162,7 +169,7 @@ export default function PipelinePage() {
                               )}
                             </div>
                           )}
-                        </div>
+                        </motion.div>
                       </Link>
                     ))}
                     {stageCandidates.length === 0 && (

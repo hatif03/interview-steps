@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth-context";
+import { AuthLayout } from "@/components/auth-layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -26,11 +27,12 @@ export default function RecruiterSignInPage() {
     try {
       if (mode === "signup") {
         await signUp(email, password, name, "recruiter");
-        toast.success("Recruiter account created");
+        toast.success("Account created");
+        router.push("/recruiter/onboarding");
       } else {
         await signIn(email, password);
+        router.push("/");
       }
-      router.push("/");
     } catch {
       toast.error(mode === "signup" ? "Sign up failed" : "Sign in failed");
     } finally {
@@ -39,20 +41,19 @@ export default function RecruiterSignInPage() {
   };
 
   return (
-    <div className="min-h-[80vh] flex items-center justify-center">
-      <Card className="w-full max-w-md">
+    <AuthLayout
+      variant="recruiter"
+      title="Hire smarter with AI"
+      subtitle="Screen, rank, and interview candidates at scale."
+    >
+      <Card className="w-full max-w-md border-0 shadow-lg">
         <CardHeader>
-          <CardTitle>{mode === "signin" ? "Recruiter Sign In" : "Recruiter Sign Up"}</CardTitle>
+          <CardTitle>{mode === "signin" ? "Recruiter Sign In" : "Create Recruiter Account"}</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <GoogleSignInButton
-            role="recruiter"
-            onSuccess={() => router.push("/")}
-          />
+          <GoogleSignInButton role="recruiter" onSuccess={() => router.push("/recruiter/onboarding")} />
           <div className="relative">
-            <div className="absolute inset-0 flex items-center">
-              <span className="w-full border-t" />
-            </div>
+            <div className="absolute inset-0 flex items-center"><span className="w-full border-t" /></div>
             <div className="relative flex justify-center text-xs uppercase">
               <span className="bg-card px-2 text-muted-foreground">Or</span>
             </div>
@@ -76,18 +77,18 @@ export default function RecruiterSignInPage() {
               {loading ? "Please wait..." : mode === "signin" ? "Sign In" : "Create Account"}
             </Button>
           </form>
-          <p className="text-sm text-muted-foreground mt-4 text-center">
+          <p className="text-sm text-muted-foreground text-center">
             {mode === "signin" ? (
               <>No account? <button type="button" className="text-primary underline" onClick={() => setMode("signup")}>Sign up</button></>
             ) : (
               <>Have an account? <button type="button" className="text-primary underline" onClick={() => setMode("signin")}>Sign in</button></>
             )}
           </p>
-          <p className="text-xs text-muted-foreground mt-2 text-center">
-            <Link href="/candidate/sign-in" className="underline">Candidate portal</Link>
+          <p className="text-xs text-muted-foreground text-center">
+            <Link href="/candidate/sign-in" className="underline">I'm a candidate</Link>
           </p>
         </CardContent>
       </Card>
-    </div>
+    </AuthLayout>
   );
 }

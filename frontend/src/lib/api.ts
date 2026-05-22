@@ -1,5 +1,16 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
+let tokenProvider: (() => Promise<string | null>) | null = null;
+
+export function setAuthTokenProvider(fn: () => Promise<string | null>) {
+  tokenProvider = null;
+  tokenProvider = fn;
+}
+
+async function getToken(): Promise<string | null> {
+  return tokenProvider ? tokenProvider() : null;
+}
+
 async function request<T>(path: string, options?: RequestInit, retries = 1): Promise<T> {
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
@@ -12,7 +23,8 @@ async function request<T>(path: string, options?: RequestInit, retries = 1): Pro
       });
       if (!res.ok) {
         const error = await res.json().catch(() => ({ detail: res.statusText }));
-        throw new Error(error.detail || `HTTP ${res.status}`);
+        const detail = error.detail;
+        throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail) || `HTTP ${res.status}`);
       }
       return res.json();
     } catch (err) {
@@ -26,22 +38,76 @@ async function request<T>(path: string, options?: RequestInit, retries = 1): Pro
   throw new Error("Request failed");
 }
 
+async function authRequest<T>(path: string, options?: RequestInit, retries = 1): Promise<T> {
+  const token = await getToken();
+  return request<T>(
+    path,
+    {
+      ...options,
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...options?.headers,
+      },
+    },
+    retries
+  );
+}
+
+async function authFormRequest<T>(path: string, form: FormData): Promise<T> {
+  const token = await getToken();
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    body: form,
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(error.detail || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export const SCORING_PRESETS = {
+  technical: { jd_match: 0.20, github: 0.25, test_code: 0.30, test_la: 0.05, project_relevance: 0.10, research_relevance: 0.05, cgpa: 0.05 },
+  balanced: { jd_match: 0.25, github: 0.20, test_code: 0.20, test_la: 0.10, project_relevance: 0.10, research_relevance: 0.05, cgpa: 0.10 },
+  academic: { jd_match: 0.20, github: 0.10, test_code: 0.15, test_la: 0.15, project_relevance: 0.10, research_relevance: 0.10, cgpa: 0.20 },
+};
+
+export const DEFAULT_APPLY_FORM_CONFIG = {
+  fields: {
+    college: { required: true, enabled: true },
+    branch: { required: true, enabled: true },
+    cgpa: { required: false, enabled: true },
+    best_ai_project: { required: true, enabled: true },
+    research_work: { required: false, enabled: true },
+    github_url: { required: true, enabled: true },
+    resume_url: { required: true, enabled: true },
+  },
+};
+
 export const api = {
   // Jobs
-  createJob: (data: { title: string; description: string; weight_config?: Record<string, number> }) =>
-    request("/jobs", { method: "POST", body: JSON.stringify(data) }),
-  listJobs: () => request<Job[]>("/jobs"),
-  getJob: (id: string) => request<Job>(`/jobs/${id}`),
-  updateJob: (id: string, data: { title: string; description: string; weight_config?: Record<string, number> }) =>
-    request(`/jobs/${id}`, { method: "PUT", body: JSON.stringify(data) }),
-  deleteJob: (id: string) => request(`/jobs/${id}`, { method: "DELETE" }),
+  createJob: (data: JobCreatePayload) =>
+    authRequest<Job>("/jobs", { method: "POST", body: JSON.stringify(data) }),
+  listJobs: () => authRequest<Job[]>("/jobs"),
+  getJob: (id: string) => authRequest<Job>(`/jobs/${id}`),
+  updateJob: (id: string, data: Partial<JobCreatePayload> & { regenerate_slug?: boolean }) =>
+    authRequest<Job>(`/jobs/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+  deleteJob: (id: string) => authRequest(`/jobs/${id}`, { method: "DELETE" }),
 
   // Candidates
-  uploadCandidates: (jobId: string, file: File) => {
+  uploadCandidates: async (jobId: string, file: File) => {
     const form = new FormData();
     form.append("file", file);
     form.append("job_id", jobId);
-    return fetch(`${API_BASE}/candidates/upload`, { method: "POST", body: form }).then((r) => r.json());
+    const token = await getToken();
+    const res = await fetch(`${API_BASE}/candidates/upload`, {
+      method: "POST",
+      body: form,
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) throw new Error("Upload failed");
+    return res.json();
   },
   listCandidates: (params?: { job_id?: string; stage?: string; limit?: number; offset?: number }) => {
     const query = new URLSearchParams();
@@ -75,11 +141,13 @@ export const api = {
     request<{ evaluation: Evaluation | null; score: Score | null }>(`/evaluations/candidate/${candidateId}`),
 
   // Tests
-  uploadTestResults: (jobId: string, file: File) => {
+  uploadTestResults: async (jobId: string, file: File) => {
     const form = new FormData();
     form.append("file", file);
     form.append("job_id", jobId);
-    return fetch(`${API_BASE}/tests/upload-results`, { method: "POST", body: form }).then((r) => r.json());
+    const res = await fetch(`${API_BASE}/tests/upload-results`, { method: "POST", body: form });
+    if (!res.ok) throw new Error("Upload failed");
+    return res.json();
   },
   getTestResults: (jobId: string) => request<{ results: TestResult[]; total: number }>(`/tests/results/${jobId}`),
 
@@ -109,6 +177,44 @@ export const api = {
     request<AppUser>("/auth/me", { headers: { Authorization: `Bearer ${token}` } }),
   linkCandidate: (token: string) =>
     request("/auth/link-candidate", { method: "POST", headers: { Authorization: `Bearer ${token}` } }),
+
+  getRecruiterProfile: (token?: string) =>
+    token
+      ? request<RecruiterProfile>("/auth/recruiter-profile", { headers: { Authorization: `Bearer ${token}` } })
+      : authRequest<RecruiterProfile>("/auth/recruiter-profile"),
+  updateRecruiterProfile: (data: Partial<RecruiterProfile>, token?: string) =>
+    token
+      ? request<RecruiterProfile>("/auth/recruiter-profile", {
+          method: "PUT",
+          body: JSON.stringify(data),
+          headers: { Authorization: `Bearer ${token}` },
+        })
+      : authRequest<RecruiterProfile>("/auth/recruiter-profile", { method: "PUT", body: JSON.stringify(data) }),
+
+  getCandidateProfile: (token?: string) =>
+    token
+      ? request<CandidateProfile>("/auth/candidate-profile", { headers: { Authorization: `Bearer ${token}` } })
+      : authRequest<CandidateProfile>("/auth/candidate-profile"),
+  updateCandidateProfile: (data: Partial<CandidateProfile>, token?: string) =>
+    token
+      ? request<CandidateProfile>("/auth/candidate-profile", {
+          method: "PUT",
+          body: JSON.stringify(data),
+          headers: { Authorization: `Bearer ${token}` },
+        })
+      : authRequest<CandidateProfile>("/auth/candidate-profile", { method: "PUT", body: JSON.stringify(data) }),
+
+  // Public
+  getPublicJob: (slug: string) => request<PublicJob>(`/public/jobs/${slug}`),
+  applyToJob: (slug: string, data: ApplyFormPayload) =>
+    authRequest<{ success: boolean; candidate_id: string; job_title: string }>(
+      `/public/jobs/${slug}/apply`,
+      { method: "POST", body: JSON.stringify(data) }
+    ),
+
+  // Candidate portal
+  getMyApplications: () => authRequest<{ applications: Application[]; total: number }>("/candidate/applications"),
+  getMyInterviews: () => authRequest<{ interviews: ScheduledInterview[]; total: number }>("/candidate/interviews"),
 
   // Mock interviews
   assignMockInterview: (data: {
@@ -145,6 +251,17 @@ export const api = {
 };
 
 // Types
+export interface JobCreatePayload {
+  title: string;
+  description: string;
+  weight_config?: Record<string, number>;
+  apply_enabled?: boolean;
+  apply_form_config?: Record<string, unknown>;
+  status?: string;
+  location?: string;
+  job_type?: string;
+}
+
 export interface Job {
   id: string;
   title: string;
@@ -152,6 +269,90 @@ export interface Job {
   weight_config: Record<string, number>;
   created_at: string;
   candidate_count?: number;
+  recruiter_id?: string;
+  apply_slug?: string;
+  apply_enabled?: boolean;
+  apply_form_config?: Record<string, unknown>;
+  status?: string;
+  location?: string;
+  job_type?: string;
+  company_name?: string;
+}
+
+export interface PublicJob {
+  slug: string;
+  title: string;
+  description: string;
+  location?: string;
+  job_type?: string;
+  company_name?: string;
+  apply_form_config?: Record<string, unknown>;
+  status?: string;
+}
+
+export interface ApplyFormPayload {
+  college?: string;
+  branch?: string;
+  cgpa?: number;
+  best_ai_project?: string;
+  research_work?: string;
+  github_url?: string;
+  resume_url?: string;
+}
+
+export interface RecruiterProfile {
+  user_id: string;
+  company_name?: string;
+  company_size?: string;
+  industry?: string;
+  website?: string;
+  job_title?: string;
+  hiring_volume?: string;
+  email_notifications?: boolean;
+  default_scoring_preset?: string;
+  onboarding_completed?: boolean;
+}
+
+export interface CandidateProfile {
+  user_id: string;
+  phone?: string;
+  location?: string;
+  college?: string;
+  branch?: string;
+  graduation_year?: number;
+  cgpa?: number;
+  github_url?: string;
+  linkedin_url?: string;
+  skills?: string[];
+  best_ai_project?: string;
+  research_work?: string;
+  resume_url?: string;
+  onboarding_completed?: boolean;
+}
+
+export interface Application {
+  candidate_id: string;
+  job_id: string;
+  job_title: string;
+  company_name?: string;
+  pipeline_stage: string;
+  status_message?: string;
+  source: string;
+  applied_at: string;
+  composite_score?: number;
+  rank?: number;
+}
+
+export interface ScheduledInterview {
+  id: string;
+  candidate_id: string;
+  job_id: string;
+  scheduled_at: string;
+  duration_minutes: number;
+  google_meet_link?: string;
+  status: string;
+  job_title?: string;
+  candidate_name?: string;
 }
 
 export interface Candidate {
@@ -170,6 +371,8 @@ export interface Candidate {
   resume_text?: string;
   pipeline_stage: string;
   status_message?: string | null;
+  source?: string;
+  applied_at?: string;
   created_at: string;
   scores?: Score | null;
 }
@@ -275,3 +478,18 @@ export interface MockFeedback {
   final_assessment: string;
   created_at: string;
 }
+
+export const STAGE_LABELS: Record<string, string> = {
+  uploaded: "Application received",
+  resume_processed: "Resume reviewed",
+  evaluating: "Under AI evaluation",
+  evaluated: "Evaluation complete",
+  ranked: "Ranked in pool",
+  test_sent: "Assessment sent",
+  test_completed: "Assessment completed",
+  shortlisted: "Shortlisted",
+  mock_interview_assigned: "Mock interview assigned",
+  mock_interview_completed: "Mock interview done",
+  interview_scheduled: "Interview scheduled",
+  error: "Needs attention",
+};
