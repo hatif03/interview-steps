@@ -12,6 +12,8 @@ import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { toast } from "sonner";
 import { motion } from "framer-motion";
+import { PageHeader } from "@/components/page-header";
+import { AppContainer } from "@/components/app-container";
 import { CheckCircle2 } from "lucide-react";
 import Link from "next/link";
 
@@ -90,13 +92,12 @@ export default function CandidateOnboardingPage() {
   };
 
   return (
-    <div className="max-w-2xl mx-auto">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold">Complete your profile</h1>
-        <p className="text-sm text-muted-foreground">
-          Hi {profile?.name || "there"} — recruiters use this to evaluate your applications.
-        </p>
-      </div>
+    <AppContainer size="narrow">
+      <PageHeader
+        title="Complete your profile"
+        description={`Hi ${profile?.name || "there"} — recruiters use this to evaluate your applications.`}
+        className="mb-6"
+      />
       <StepWizard
         steps={STEPS}
         currentStep={step}
@@ -209,6 +210,6 @@ export default function CandidateOnboardingPage() {
           </Card>
         )}
       </StepWizard>
-    </div>
+    </AppContainer>
   );
 }

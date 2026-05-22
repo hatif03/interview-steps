@@ -2,6 +2,7 @@
 
 import { LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { LinkButton } from "@/components/link-button";
 import { StaggerItem } from "@/components/motion";
 
 interface EmptyStateProps {
@@ -13,16 +14,24 @@ interface EmptyStateProps {
   href?: string;
 }
 
-export function EmptyState({ icon: Icon, title, description, actionLabel, onAction }: EmptyStateProps) {
+export function EmptyState({
+  icon: Icon,
+  title,
+  description,
+  actionLabel,
+  onAction,
+  href,
+}: EmptyStateProps) {
   return (
     <StaggerItem>
-      <div className="flex flex-col items-center justify-center py-16 px-4 text-center">
-        <div className="h-14 w-14 rounded-2xl bg-muted flex items-center justify-center mb-4">
-          <Icon className="h-7 w-7 text-muted-foreground" />
+      <div className="flex flex-col items-center justify-center py-16 px-4 text-center rounded-xl border border-dashed bg-muted/30">
+        <div className="h-16 w-16 rounded-2xl bg-primary/10 flex items-center justify-center mb-4 ring-8 ring-primary/5">
+          <Icon className="h-8 w-8 text-primary" />
         </div>
         <h3 className="text-lg font-semibold mb-1">{title}</h3>
-        <p className="text-sm text-muted-foreground max-w-sm mb-6">{description}</p>
-        {actionLabel && onAction && (
+        <p className="text-sm text-muted-foreground max-w-sm mb-6 leading-relaxed">{description}</p>
+        {actionLabel && href && <LinkButton href={href}>{actionLabel}</LinkButton>}
+        {actionLabel && onAction && !href && (
           <Button onClick={onAction}>{actionLabel}</Button>
         )}
       </div>

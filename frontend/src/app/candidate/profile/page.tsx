@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { PageSkeleton } from "@/components/loading";
+import { PageHeader } from "@/components/page-header";
 import { toast } from "sonner";
 import { PageTransition } from "@/components/motion";
 
@@ -53,11 +54,8 @@ export default function ProfilePage() {
   if (loading) return <PageSkeleton rows={5} />;
 
   return (
-    <PageTransition className="space-y-6 max-w-2xl">
-      <div>
-        <h1 className="text-2xl font-bold">Profile</h1>
-        <p className="text-sm text-muted-foreground">Your profile pre-fills job applications</p>
-      </div>
+    <PageTransition className="space-y-6">
+      <PageHeader title="Profile" description="Your profile pre-fills job applications" />
 
       <Card>
         <CardHeader><CardTitle>Account</CardTitle></CardHeader>

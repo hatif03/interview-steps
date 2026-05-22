@@ -1,26 +1,17 @@
 "use client";
 
-import Link from "next/link";
+import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import {
-  LayoutDashboard,
-  Briefcase,
-  Users,
-  GitGraph,
-  Settings,
-  Brain,
-  Menu,
-  Moon,
-  Sun,
-  LogOut,
-  ChevronLeft,
-  ChevronRight,
-} from "lucide-react";
+import { Moon, Sun, LogOut } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useAuth } from "@/lib/auth-context";
-import { cn } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
+import { api } from "@/lib/api";
+import { AppSidebar } from "@/components/app-sidebar";
+import { AppBreadcrumb } from "@/components/app-breadcrumb";
+import { AppContainer } from "@/components/app-container";
+import { PageTransition } from "@/components/motion";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -28,24 +19,14 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { PageTransition } from "@/components/motion";
-import { useEffect, useState } from "react";
-import { api } from "@/lib/api";
-
-const navItems = [
-  { href: "/", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/jobs", label: "Jobs", icon: Briefcase },
-  { href: "/candidates", label: "Candidates", icon: Users },
-  { href: "/pipeline", label: "Pipeline", icon: GitGraph },
-  { href: "/settings", label: "Settings", icon: Settings },
-];
+import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
+import { Separator } from "@/components/ui/separator";
 
 export function RecruiterShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const { user, profile, loading, signOut, getIdToken } = useAuth();
   const { theme, setTheme } = useTheme();
-  const [collapsed, setCollapsed] = useState(false);
   const [checkingOnboarding, setCheckingOnboarding] = useState(true);
 
   useEffect(() => {
@@ -64,9 +45,7 @@ export function RecruiterShell({ children }: { children: React.ReactNode }) {
       }
       try {
         const rp = await api.getRecruiterProfile(token);
-        if (!rp.onboarding_completed) {
-          router.replace("/recruiter/onboarding");
-        }
+        if (!rp.onboarding_completed) router.replace("/recruiter/onboarding");
       } catch {
         router.replace("/recruiter/onboarding");
       } finally {
@@ -77,7 +56,7 @@ export function RecruiterShell({ children }: { children: React.ReactNode }) {
 
   if (loading || checkingOnboarding) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-muted/30">
+      <div className="min-h-screen flex items-center justify-center bg-muted/40">
         <div className="animate-pulse text-muted-foreground text-sm">Loading...</div>
       </div>
     );
@@ -91,73 +70,26 @@ export function RecruiterShell({ children }: { children: React.ReactNode }) {
     .toUpperCase();
 
   return (
-    <div className="min-h-screen bg-muted/30 flex">
-      <aside
-        className={cn(
-          "fixed left-0 top-0 h-full bg-card border-r border-border flex flex-col z-50 transition-all duration-200",
-          collapsed ? "w-16" : "w-64"
-        )}
-      >
-        <div className="p-4 border-b border-border flex items-center justify-between">
-          {!collapsed && (
-            <div className="flex items-center gap-2">
-              <div className="h-8 w-8 rounded-lg bg-primary flex items-center justify-center">
-                <Brain className="h-4 w-4 text-primary-foreground" />
-              </div>
-              <div>
-                <h1 className="text-sm font-bold tracking-tight">AI Screener</h1>
-                <p className="text-[10px] text-muted-foreground">Recruiter Portal</p>
-              </div>
-            </div>
-          )}
-          <Button variant="ghost" size="icon" className="shrink-0" onClick={() => setCollapsed(!collapsed)}>
-            {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
-          </Button>
-        </div>
-        <nav className="flex-1 py-4 px-2 space-y-1">
-          {navItems.map((item) => {
-            const isActive = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                title={item.label}
-                className={cn(
-                  "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors",
-                  isActive
-                    ? "bg-primary text-primary-foreground"
-                    : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
-                  collapsed && "justify-center px-2"
-                )}
-              >
-                <item.icon className="h-4 w-4 shrink-0" />
-                {!collapsed && item.label}
-              </Link>
-            );
-          })}
-        </nav>
-      </aside>
-
-      <div className={cn("flex-1 flex flex-col transition-all duration-200", collapsed ? "ml-16" : "ml-64")}>
-        <header className="sticky top-0 z-40 h-14 border-b bg-background/80 backdrop-blur flex items-center justify-between px-6">
-          <div className="flex items-center gap-2 md:hidden">
-            <Menu className="h-5 w-5 text-muted-foreground" />
-          </div>
-          <div className="flex-1" />
-          <div className="flex items-center gap-2">
+    <SidebarProvider>
+      <AppSidebar />
+      <SidebarInset className="bg-muted/40">
+        <header className="sticky top-0 z-40 flex h-14 shrink-0 items-center gap-3 border-b bg-background/95 backdrop-blur px-4">
+          <SidebarTrigger />
+          <Separator orientation="vertical" className="h-4" />
+          <AppBreadcrumb />
+          <div className="ml-auto flex items-center gap-1">
             <Button
               variant="ghost"
               size="icon"
+              className="size-8"
               onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
             >
-              <Sun className="h-4 w-4 rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
-              <Moon className="absolute h-4 w-4 rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
+              <Sun className="size-4 rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
+              <Moon className="absolute size-4 rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
             </Button>
             <DropdownMenu>
-              <DropdownMenuTrigger
-                className="inline-flex h-9 w-9 items-center justify-center rounded-full hover:bg-muted"
-              >
-                <Avatar className="h-9 w-9">
+              <DropdownMenuTrigger className="inline-flex size-8 items-center justify-center rounded-full hover:bg-muted outline-none">
+                <Avatar className="size-8">
                   <AvatarFallback className="text-xs">{initials}</AvatarFallback>
                 </Avatar>
               </DropdownMenuTrigger>
@@ -167,12 +99,10 @@ export function RecruiterShell({ children }: { children: React.ReactNode }) {
                   <p className="text-xs text-muted-foreground">{profile?.email}</p>
                 </div>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => (window.location.href = "/settings")}>
-                  Settings
-                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => router.push("/settings")}>Settings</DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={() => signOut()}>
-                  <LogOut className="h-4 w-4 mr-2" />
+                  <LogOut className="size-4 mr-2" />
                   Sign out
                 </DropdownMenuItem>
               </DropdownMenuContent>
@@ -180,9 +110,11 @@ export function RecruiterShell({ children }: { children: React.ReactNode }) {
           </div>
         </header>
         <main className="flex-1 p-6 md:p-8">
-          <PageTransition>{children}</PageTransition>
+          <AppContainer size="recruiter">
+            <PageTransition>{children}</PageTransition>
+          </AppContainer>
         </main>
-      </div>
-    </div>
+      </SidebarInset>
+    </SidebarProvider>
   );
 }

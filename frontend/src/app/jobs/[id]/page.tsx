@@ -34,6 +34,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
 import Link from "next/link";
 import { BackButton } from "@/components/back-button";
+import { PageHeader } from "@/components/page-header";
 import { PageSkeleton } from "@/components/loading";
 import { CopyLinkButton } from "@/components/copy-link-button";
 import { FileDropzone, downloadCsvTemplate } from "@/components/file-dropzone";
@@ -426,22 +427,26 @@ export default function JobDetailPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between">
-        <div>
-          <BackButton href="/jobs" label="Back to Jobs" />
-          <h1 className="text-3xl font-bold tracking-tight">{job.title}</h1>
-          <p className="text-muted-foreground mt-1 line-clamp-2">{job.description.slice(0, 200)}...</p>
-        </div>
-        <AlertDialog>
-          <AlertDialogTrigger
-            className="inline-flex items-center justify-center gap-1.5 rounded-md text-sm font-medium bg-destructive text-destructive-foreground hover:bg-destructive/90 h-9 px-3"
-          >
-            <Trash2 className="h-4 w-4" /> Delete Job
-          </AlertDialogTrigger>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Delete this job?</AlertDialogTitle>
-              <AlertDialogDescription>
+      <BackButton href="/jobs" label="Back to Jobs" />
+      <PageHeader
+        title={job.title}
+        description={job.description.slice(0, 200) + "..."}
+        badge={
+          <Badge variant={job.status === "open" ? "default" : "secondary"} className="capitalize">
+            {job.status || "draft"}
+          </Badge>
+        }
+        actions={
+          <AlertDialog>
+            <AlertDialogTrigger
+              className="inline-flex items-center justify-center gap-1.5 rounded-md text-sm font-medium bg-destructive text-destructive-foreground hover:bg-destructive/90 h-9 px-3"
+            >
+              <Trash2 className="h-4 w-4" /> Delete Job
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Delete this job?</AlertDialogTitle>
+                <AlertDialogDescription>
                 This will permanently delete "{job.title}" and all {candidates.length} candidates. This action cannot be undone.
               </AlertDialogDescription>
             </AlertDialogHeader>
@@ -453,7 +458,8 @@ export default function JobDetailPage() {
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
-      </div>
+        }
+      />
 
       {/* Live status banner */}
       {(processingCount > 0 || errorCount > 0) && (

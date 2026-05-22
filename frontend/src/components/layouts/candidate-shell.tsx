@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
@@ -15,8 +16,11 @@ import {
 import { useTheme } from "next-themes";
 import { useAuth } from "@/lib/auth-context";
 import { cn } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
+import { api } from "@/lib/api";
+import { AppContainer } from "@/components/app-container";
+import { PageTransition } from "@/components/motion";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -24,9 +28,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { PageTransition } from "@/components/motion";
-import { useEffect, useState } from "react";
-import { api } from "@/lib/api";
 
 const navItems = [
   { href: "/candidate", label: "Dashboard", icon: LayoutDashboard },
@@ -69,9 +70,7 @@ export function CandidateShell({ children }: { children: React.ReactNode }) {
       }
       try {
         const cp = await api.getCandidateProfile(token);
-        if (!cp.onboarding_completed) {
-          router.replace("/candidate/onboarding");
-        }
+        if (!cp.onboarding_completed) router.replace("/candidate/onboarding");
       } catch {
         router.replace("/candidate/onboarding");
       } finally {
@@ -80,13 +79,11 @@ export function CandidateShell({ children }: { children: React.ReactNode }) {
     });
   }, [loading, user, profile, pathname, router, getIdToken, isPublic]);
 
-  if (isPublic) {
-    return <>{children}</>;
-  }
+  if (isPublic) return <>{children}</>;
 
   if (loading || checkingOnboarding) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-muted/30">
+      <div className="min-h-screen flex items-center justify-center bg-background">
         <div className="animate-pulse text-muted-foreground text-sm">Loading...</div>
       </div>
     );
@@ -102,92 +99,83 @@ export function CandidateShell({ children }: { children: React.ReactNode }) {
     .toUpperCase();
 
   return (
-    <div className="candidate-portal min-h-screen bg-gradient-to-br from-teal-50/30 to-background dark:from-teal-950/10 dark:to-background flex flex-col">
-      <style jsx global>{`
-        .candidate-portal {
-          --primary: oklch(0.55 0.15 175);
-          --primary-foreground: oklch(0.98 0.01 175);
-          --ring: oklch(0.55 0.15 175);
-        }
-      `}</style>
+    <div className="min-h-screen flex flex-col bg-gradient-to-b from-background via-muted/20 to-background">
+      <header className="sticky top-0 z-40 border-b bg-background/80 backdrop-blur-md">
+        <AppContainer size="candidate" className="px-4 sm:px-6">
+          <div className="h-16 flex items-center justify-between gap-4">
+            <Link href="/candidate" className="flex items-center gap-2.5 shrink-0">
+              <div className="h-9 w-9 rounded-xl bg-primary flex items-center justify-center shadow-sm">
+                <Sparkles className="h-4 w-4 text-primary-foreground" />
+              </div>
+              <span className="font-semibold text-base">Career Portal</span>
+            </Link>
 
-      <header className="sticky top-0 z-40 border-b bg-background/80 backdrop-blur">
-        <div className="max-w-5xl mx-auto px-4 h-14 flex items-center justify-between">
-          <Link href="/candidate" className="flex items-center gap-2">
-            <div className="h-8 w-8 rounded-lg bg-primary flex items-center justify-center">
-              <Sparkles className="h-4 w-4 text-primary-foreground" />
-            </div>
-            <div>
-              <span className="font-bold text-sm">Career Portal</span>
-            </div>
-          </Link>
+            <nav className="hidden md:flex items-center gap-1">
+              {navItems.map((item) => {
+                const isActive =
+                  item.href === "/candidate"
+                    ? pathname === "/candidate"
+                    : pathname.startsWith(item.href);
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    className={cn(
+                      "flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-all",
+                      isActive
+                        ? "bg-primary text-primary-foreground shadow-sm"
+                        : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                    )}
+                  >
+                    <item.icon className="h-4 w-4" />
+                    {item.label}
+                  </Link>
+                );
+              })}
+            </nav>
 
-          <nav className="hidden md:flex items-center gap-1">
-            {navItems.map((item) => {
-              const isActive =
-                item.href === "/candidate"
-                  ? pathname === "/candidate"
-                  : pathname.startsWith(item.href);
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className={cn(
-                    "flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
-                    isActive
-                      ? "bg-primary/10 text-primary"
-                      : "text-muted-foreground hover:text-foreground hover:bg-muted"
-                  )}
-                >
-                  <item.icon className="h-4 w-4" />
-                  {item.label}
-                </Link>
-              );
-            })}
-          </nav>
-
-          <div className="flex items-center gap-1">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-            >
-              <Sun className="h-4 w-4 rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
-              <Moon className="absolute h-4 w-4 rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
-            </Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                className="inline-flex h-9 w-9 items-center justify-center rounded-full hover:bg-muted"
+            <div className="flex items-center gap-1">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-9 rounded-full"
+                onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
               >
-                <Avatar className="h-8 w-8">
-                  <AvatarFallback className="text-xs bg-primary/10 text-primary">{initials}</AvatarFallback>
-                </Avatar>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <div className="px-2 py-1.5">
-                  <p className="text-sm font-medium">{profile?.name}</p>
-                  <p className="text-xs text-muted-foreground">{profile?.email}</p>
-                </div>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => (window.location.href = "/candidate/profile")}>
-                  Profile
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => signOut()}>
-                  <LogOut className="h-4 w-4 mr-2" />
-                  Sign out
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+                <Sun className="size-4 rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
+                <Moon className="absolute size-4 rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger className="inline-flex size-9 items-center justify-center rounded-full hover:bg-muted outline-none">
+                  <Avatar className="size-8">
+                    <AvatarFallback className="text-xs bg-primary/10 text-primary">{initials}</AvatarFallback>
+                  </Avatar>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <div className="px-2 py-1.5">
+                    <p className="text-sm font-medium">{profile?.name}</p>
+                    <p className="text-xs text-muted-foreground">{profile?.email}</p>
+                  </div>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={() => router.push("/candidate/profile")}>Profile</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => signOut()}>
+                    <LogOut className="size-4 mr-2" />
+                    Sign out
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
           </div>
-        </div>
+        </AppContainer>
       </header>
 
-      <main className="flex-1 max-w-5xl w-full mx-auto px-4 py-6 pb-24 md:pb-8">
-        <PageTransition>{children}</PageTransition>
+      <main className="flex-1 py-8 pb-24 md:pb-10">
+        <AppContainer size="candidate" className="px-4 sm:px-6">
+          <PageTransition>{children}</PageTransition>
+        </AppContainer>
       </main>
 
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 border-t bg-background/95 backdrop-blur z-50">
-        <div className="flex justify-around py-2">
+      <nav className="md:hidden fixed bottom-0 inset-x-0 z-50 border-t bg-background/95 backdrop-blur-md pb-safe">
+        <div className="flex justify-around px-2 py-2">
           {navItems.map((item) => {
             const isActive =
               item.href === "/candidate"
@@ -198,12 +186,12 @@ export function CandidateShell({ children }: { children: React.ReactNode }) {
                 key={item.href}
                 href={item.href}
                 className={cn(
-                  "flex flex-col items-center gap-0.5 px-3 py-1 text-[10px] font-medium",
-                  isActive ? "text-primary" : "text-muted-foreground"
+                  "flex flex-col items-center gap-1 px-3 py-2 rounded-2xl min-w-[4.5rem] transition-colors",
+                  isActive ? "text-primary bg-primary/10" : "text-muted-foreground"
                 )}
               >
                 <item.icon className="h-5 w-5" />
-                {item.label}
+                <span className="text-[10px] font-medium">{item.label}</span>
               </Link>
             );
           })}

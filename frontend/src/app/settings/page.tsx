@@ -9,6 +9,8 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { PageSkeleton } from "@/components/loading";
+import { PageHeader } from "@/components/page-header";
+import { Section } from "@/components/section";
 import { toast } from "sonner";
 import { PageTransition } from "@/components/motion";
 
@@ -42,11 +44,8 @@ export default function SettingsPage() {
   if (loading) return <PageSkeleton rows={4} />;
 
   return (
-    <PageTransition className="max-w-2xl mx-auto space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">Settings</h1>
-        <p className="text-muted-foreground mt-1">Manage your company profile and preferences</p>
-      </div>
+    <PageTransition className="space-y-6">
+      <PageHeader title="Settings" description="Manage your company profile and preferences" />
 
       <Card>
         <CardHeader><CardTitle>Company Profile</CardTitle></CardHeader>

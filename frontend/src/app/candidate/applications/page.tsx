@@ -8,6 +8,7 @@ import { StaggerList, StaggerItem } from "@/components/motion";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
+import { PageHeader } from "@/components/page-header";
 import { FileText } from "lucide-react";
 
 const STAGE_PROGRESS: Record<string, number> = {
@@ -28,10 +29,7 @@ export default function ApplicationsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold">Applications</h1>
-        <p className="text-sm text-muted-foreground">Track your job applications and pipeline progress</p>
-      </div>
+      <PageHeader title="Applications" description="Track your job applications and pipeline progress" />
 
       {applications.length === 0 ? (
         <EmptyState

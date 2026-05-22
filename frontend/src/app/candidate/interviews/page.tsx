@@ -10,6 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { LinkButton } from "@/components/link-button";
+import { PageHeader } from "@/components/page-header";
 import { Calendar, Video, ExternalLink } from "lucide-react";
 import { StaggerList } from "@/components/motion";
 
@@ -33,10 +34,7 @@ export default function InterviewsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold">Interviews</h1>
-        <p className="text-sm text-muted-foreground">Mock interviews and scheduled live sessions</p>
-      </div>
+      <PageHeader title="Interviews" description="Mock interviews and scheduled live sessions" />
 
       <Tabs defaultValue="mock">
         <TabsList>

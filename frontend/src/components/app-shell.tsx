@@ -2,6 +2,7 @@
 
 import { usePathname } from "next/navigation";
 import { AuthProvider } from "@/lib/auth-context";
+import { PortalProvider } from "@/components/portal-provider";
 import { RecruiterShell } from "@/components/layouts/recruiter-shell";
 import { CandidateShell } from "@/components/layouts/candidate-shell";
 
@@ -19,15 +20,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <AuthProvider>
-      {isBare ? (
-        <div className="min-h-screen bg-muted/30">{children}</div>
-      ) : isCandidatePortal ? (
-        <CandidateShell>{children}</CandidateShell>
-      ) : isRecruiterOnboarding ? (
-        <RecruiterShell>{children}</RecruiterShell>
-      ) : (
-        <RecruiterShell>{children}</RecruiterShell>
-      )}
+      <PortalProvider>
+        {isBare ? (
+          children
+        ) : isCandidatePortal ? (
+          <CandidateShell>{children}</CandidateShell>
+        ) : isRecruiterOnboarding ? (
+          <RecruiterShell>{children}</RecruiterShell>
+        ) : (
+          <RecruiterShell>{children}</RecruiterShell>
+        )}
+      </PortalProvider>
     </AuthProvider>
   );
 }

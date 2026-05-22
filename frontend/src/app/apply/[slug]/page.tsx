@@ -15,6 +15,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { PageSkeleton } from "@/components/loading";
 import { toast } from "sonner";
+import { AppContainer } from "@/components/app-container";
 import { scaleIn } from "@/lib/motion";
 
 type View = "preview" | "form" | "success";
@@ -91,9 +92,9 @@ export default function ApplyPage() {
 
   if (view === "success") {
     return (
-      <div className="min-h-screen flex items-center justify-center p-6 bg-muted/30">
+      <div className="min-h-screen flex items-center justify-center p-6 bg-gradient-to-b from-background via-muted/30 to-background">
         <motion.div initial={scaleIn.initial} animate={scaleIn.animate} className="max-w-md w-full">
-          <Card>
+          <Card className="rounded-2xl shadow-sm">
             <CardContent className="pt-12 pb-12 text-center">
               <CheckCircle2 className="h-16 w-16 text-primary mx-auto mb-4" />
               <h2 className="text-xl font-bold mb-2">Application submitted!</h2>
@@ -110,9 +111,9 @@ export default function ApplyPage() {
 
   if (view === "form" && user) {
     return (
-      <div className="min-h-screen bg-muted/30 py-12 px-4">
-        <div className="max-w-xl mx-auto">
-          <Card>
+      <div className="min-h-screen bg-gradient-to-b from-background via-muted/30 to-background py-12 px-4">
+        <AppContainer size="candidate">
+          <Card className="rounded-2xl shadow-sm max-w-xl mx-auto">
             <CardHeader>
               <CardTitle>Apply to {job.title}</CardTitle>
               <p className="text-sm text-muted-foreground">Review and submit your application details</p>
@@ -155,15 +156,15 @@ export default function ApplyPage() {
               </form>
             </CardContent>
           </Card>
-        </div>
+        </AppContainer>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-teal-50/50 to-background dark:from-teal-950/20 py-12 px-4">
-      <div className="max-w-2xl mx-auto">
-        <Card>
+    <div className="min-h-screen bg-gradient-to-b from-background via-muted/30 to-background py-12 px-4">
+      <AppContainer size="candidate">
+        <Card className="rounded-2xl shadow-sm max-w-2xl mx-auto">
           <CardHeader>
             <div className="flex items-start justify-between gap-4">
               <div>
@@ -203,7 +204,7 @@ export default function ApplyPage() {
             </div>
           </CardContent>
         </Card>
-      </div>
+      </AppContainer>
     </div>
   );
 }

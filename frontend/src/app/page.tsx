@@ -11,6 +11,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { LinkButton } from "@/components/link-button";
 import { StatsSkeleton } from "@/components/loading";
+import { PageHeader } from "@/components/page-header";
+import { Section } from "@/components/section";
 import { Briefcase, Users, GitGraph, Plus, ArrowRight } from "lucide-react";
 
 export default function DashboardPage() {
@@ -27,10 +29,7 @@ export default function DashboardPage() {
   if (loading) {
     return (
       <div className="space-y-8">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
-          <p className="text-muted-foreground mt-1">AI-powered candidate screening overview</p>
-        </div>
+        <PageHeader title="Dashboard" description="AI-powered candidate screening overview" />
         <StatsSkeleton />
       </div>
     );
@@ -38,13 +37,16 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-8">
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
-          <p className="text-muted-foreground mt-1">AI-powered candidate screening overview</p>
-        </div>
-        <LinkButton href="/jobs/new"><Plus className="h-4 w-4 mr-2" />Create job</LinkButton>
-      </div>
+      <PageHeader
+        title="Dashboard"
+        description="AI-powered candidate screening overview"
+        actions={
+          <LinkButton href="/jobs/new">
+            <Plus className="h-4 w-4 mr-2" />
+            Create job
+          </LinkButton>
+        }
+      />
 
       <StaggerList className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <StatCard title="Total Jobs" value={jobs.length} icon={Briefcase} />
@@ -53,20 +55,16 @@ export default function DashboardPage() {
         <StatCard title="Active Pipelines" value={jobs.filter((j) => (j.candidate_count || 0) > 0).length} icon={GitGraph} />
       </StaggerList>
 
-      <div className="grid gap-6 lg:grid-cols-3">
-        <Card className="lg:col-span-2">
-          <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle>Recent Jobs</CardTitle>
-            <LinkButton variant="ghost" size="sm" href="/jobs">View all <ArrowRight className="h-4 w-4 ml-1" /></LinkButton>
-          </CardHeader>
-          <CardContent>
+      <Section title="Recent Jobs" actions={<LinkButton variant="ghost" size="sm" href="/jobs">View all <ArrowRight className="h-4 w-4 ml-1" /></LinkButton>}>
+        <Card>
+          <CardContent className="pt-6">
             {jobs.length === 0 ? (
               <EmptyState
                 icon={Briefcase}
                 title="No jobs yet"
                 description="Create your first job to start screening candidates with AI."
                 actionLabel="Create job"
-                onAction={() => (window.location.href = "/jobs/new")}
+                href="/jobs/new"
               />
             ) : (
               <div className="space-y-3">
@@ -92,16 +90,16 @@ export default function DashboardPage() {
             )}
           </CardContent>
         </Card>
+      </Section>
 
-        <Card>
-          <CardHeader><CardTitle>Quick Actions</CardTitle></CardHeader>
-          <CardContent className="space-y-2">
-            <LinkButton variant="outline" className="w-full justify-start" href="/jobs/new"><Plus className="h-4 w-4 mr-2" />Create new job</LinkButton>
-            <LinkButton variant="outline" className="w-full justify-start" href="/pipeline"><GitGraph className="h-4 w-4 mr-2" />View pipeline</LinkButton>
-            <LinkButton variant="outline" className="w-full justify-start" href="/candidates"><Users className="h-4 w-4 mr-2" />All candidates</LinkButton>
-          </CardContent>
-        </Card>
-      </div>
+      <Card>
+        <CardHeader><CardTitle>Quick Actions</CardTitle></CardHeader>
+        <CardContent className="space-y-2">
+          <LinkButton variant="outline" className="w-full justify-start" href="/jobs/new"><Plus className="h-4 w-4 mr-2" />Create new job</LinkButton>
+          <LinkButton variant="outline" className="w-full justify-start" href="/pipeline"><GitGraph className="h-4 w-4 mr-2" />View pipeline</LinkButton>
+          <LinkButton variant="outline" className="w-full justify-start" href="/candidates"><Users className="h-4 w-4 mr-2" />All candidates</LinkButton>
+        </CardContent>
+      </Card>
     </div>
   );
 }

@@ -11,6 +11,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import Link from "next/link";
+import { PageHeader } from "@/components/page-header";
+import { Section } from "@/components/section";
 import { FileText, Video, User } from "lucide-react";
 
 const STAGE_PROGRESS: Record<string, number> = {
@@ -57,12 +59,10 @@ export default function CandidateDashboardPage() {
 
   return (
     <div className="space-y-8">
-      <div>
-        <h2 className="text-2xl font-bold">
-          {greeting()}{profile?.name ? `, ${profile.name.split(" ")[0]}` : ""}
-        </h2>
-        <p className="text-sm text-muted-foreground mt-1">Track your applications and upcoming interviews</p>
-      </div>
+      <PageHeader
+        title={`${greeting()}${profile?.name ? `, ${profile.name.split(" ")[0]}` : ""}`}
+        description="Track your applications and upcoming interviews"
+      />
 
       <StaggerList className="grid gap-4 sm:grid-cols-3">
         <StatCard title="Applications" value={applications.length} icon={FileText} />
@@ -71,14 +71,17 @@ export default function CandidateDashboardPage() {
       </StaggerList>
 
       {applications.length > 0 && (
-        <section>
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="font-semibold">Application Status</h3>
-            <Link href="/candidate/applications" className="text-sm text-primary hover:underline">View all</Link>
-          </div>
+        <Section
+          title="Application Status"
+          actions={
+            <Link href="/candidate/applications" className="text-sm text-primary hover:underline">
+              View all
+            </Link>
+          }
+        >
           <div className="grid gap-4 sm:grid-cols-2">
             {applications.slice(0, 4).map((app) => (
-              <Card key={app.candidate_id}>
+              <Card key={app.candidate_id} className="rounded-2xl shadow-sm">
                 <CardHeader className="pb-2">
                   <div className="flex justify-between items-start">
                     <CardTitle className="text-base">{app.job_title}</CardTitle>
@@ -101,11 +104,10 @@ export default function CandidateDashboardPage() {
               </Card>
             ))}
           </div>
-        </section>
+        </Section>
       )}
 
-      <section>
-        <h3 className="font-semibold mb-4">Mock Interviews</h3>
+      <Section title="Mock Interviews">
         {interviews.length === 0 ? (
           <p className="text-sm text-muted-foreground">No mock interviews assigned yet.</p>
         ) : (
@@ -115,7 +117,7 @@ export default function CandidateDashboardPage() {
             ))}
           </div>
         )}
-      </section>
+      </Section>
     </div>
   );
 }

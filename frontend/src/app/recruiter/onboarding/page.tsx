@@ -10,6 +10,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { api, SCORING_PRESETS } from "@/lib/api";
 import { toast } from "sonner";
+import { PageHeader } from "@/components/page-header";
+import { AppContainer } from "@/components/app-container";
 import { motion } from "framer-motion";
 import { CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -68,7 +70,12 @@ export default function RecruiterOnboardingPage() {
   };
 
   return (
-    <div className="max-w-2xl mx-auto">
+    <AppContainer size="narrow">
+      <PageHeader
+        title="Welcome to AI Screener"
+        description="Let's set up your recruiter workspace in a few quick steps."
+        className="mb-6"
+      />
       <StepWizard
         steps={STEPS}
         currentStep={step}
@@ -193,6 +200,6 @@ export default function RecruiterOnboardingPage() {
           </Card>
         )}
       </StepWizard>
-    </div>
+    </AppContainer>
   );
 }

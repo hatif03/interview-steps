@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { PageSkeleton } from "@/components/loading";
+import { PageHeader } from "@/components/page-header";
 import { RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
@@ -105,28 +106,28 @@ export default function PipelinePage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Pipeline</h1>
-          <p className="text-muted-foreground mt-1">Kanban view of candidate progression</p>
-        </div>
-        <div className="flex items-center gap-3">
-          <Button variant="outline" size="sm" onClick={refresh} disabled={refreshing} className="gap-1.5">
-            <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} />
-            Refresh
-          </Button>
-          <Select value={selectedJobId} onValueChange={(v) => v && setSelectedJobId(v)}>
-            <SelectTrigger className="w-64">
-              <SelectValue placeholder="Select a job..." />
-            </SelectTrigger>
-            <SelectContent>
-              {jobs.map((j) => (
-                <SelectItem key={j.id} value={j.id}>{j.title}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-      </div>
+      <PageHeader
+        title="Pipeline"
+        description="Kanban view of candidate progression"
+        actions={
+          <div className="flex items-center gap-3">
+            <Button variant="outline" size="sm" onClick={refresh} disabled={refreshing} className="gap-1.5">
+              <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} />
+              Refresh
+            </Button>
+            <Select value={selectedJobId} onValueChange={(v) => v && setSelectedJobId(v)}>
+              <SelectTrigger className="w-64">
+                <SelectValue placeholder="Select a job..." />
+              </SelectTrigger>
+              <SelectContent>
+                {jobs.map((j) => (
+                  <SelectItem key={j.id} value={j.id}>{j.title}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        }
+      />
 
       {!selectedJobId ? (
         <p className="text-muted-foreground">Select a job to view its pipeline.</p>

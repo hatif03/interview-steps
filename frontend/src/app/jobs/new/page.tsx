@@ -12,6 +12,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Slider } from "@/components/ui/slider";
 import { CopyLinkButton } from "@/components/copy-link-button";
 import { api, DEFAULT_APPLY_FORM_CONFIG, SCORING_PRESETS } from "@/lib/api";
+import { PageHeader } from "@/components/page-header";
+import { AppContainer } from "@/components/app-container";
 import { BackButton } from "@/components/back-button";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -108,12 +110,12 @@ export default function NewJobPage() {
   }
 
   return (
-    <div className="max-w-3xl mx-auto space-y-6">
+    <AppContainer size="narrow" className="space-y-6">
       <BackButton href="/jobs" label="Back to Jobs" />
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">Create Job</h1>
-        <p className="text-muted-foreground mt-1">Set up a role and choose how candidates enter the pipeline</p>
-      </div>
+      <PageHeader
+        title="Create Job"
+        description="Set up a role and choose how candidates enter the pipeline"
+      />
 
       <StepWizard
         steps={STEPS}
@@ -221,6 +223,6 @@ export default function NewJobPage() {
           </Card>
         )}
       </StepWizard>
-    </div>
+    </AppContainer>
   );
 }

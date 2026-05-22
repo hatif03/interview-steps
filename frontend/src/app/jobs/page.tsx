@@ -11,6 +11,7 @@ import { CopyLinkButton } from "@/components/copy-link-button";
 import { PageSkeleton } from "@/components/loading";
 import { EmptyState } from "@/components/empty-state";
 import { StaggerList, StaggerItem } from "@/components/motion";
+import { PageHeader } from "@/components/page-header";
 import { Briefcase, Plus, Link2 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -35,13 +36,16 @@ export default function JobsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Jobs</h1>
-          <p className="text-muted-foreground mt-1">Manage roles and candidate intake</p>
-        </div>
-        <LinkButton href="/jobs/new"><Plus className="h-4 w-4 mr-2" />Create job</LinkButton>
-      </div>
+      <PageHeader
+        title="Jobs"
+        description="Manage roles and candidate intake"
+        actions={
+          <LinkButton href="/jobs/new">
+            <Plus className="h-4 w-4 mr-2" />
+            Create job
+          </LinkButton>
+        }
+      />
 
       <div className="flex gap-2">
         {(["all", "open", "draft", "closed"] as const).map((f) => (
@@ -52,7 +56,7 @@ export default function JobsPage() {
       </div>
 
       {filtered.length === 0 ? (
-        <EmptyState icon={Briefcase} title="No jobs found" description="Create a job to start screening candidates." actionLabel="Create job" onAction={() => (window.location.href = "/jobs/new")} />
+        <EmptyState icon={Briefcase} title="No jobs found" description="Create a job to start screening candidates." actionLabel="Create job" href="/jobs/new" />
       ) : (
         <StaggerList className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {filtered.map((job) => (
