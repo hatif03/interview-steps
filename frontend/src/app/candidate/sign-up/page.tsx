@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import { GoogleSignInButton } from "@/components/GoogleSignInButton";
 
 export default function CandidateSignUpPage() {
   const { signUp } = useAuth();
@@ -37,7 +38,23 @@ export default function CandidateSignUpPage() {
       <CardHeader>
         <CardTitle>Candidate Sign Up</CardTitle>
       </CardHeader>
-      <CardContent>
+      <CardContent className="space-y-4">
+        <GoogleSignInButton
+          role="candidate"
+          label="Sign up with Google"
+          onSuccess={() => {
+            toast.success("Signed in with Google — interviews linked by email.");
+            router.push("/candidate");
+          }}
+        />
+        <div className="relative">
+          <div className="absolute inset-0 flex items-center">
+            <span className="w-full border-t" />
+          </div>
+          <div className="relative flex justify-center text-xs uppercase">
+            <span className="bg-card px-2 text-muted-foreground">Or</span>
+          </div>
+        </div>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <Label htmlFor="name">Full Name</Label>

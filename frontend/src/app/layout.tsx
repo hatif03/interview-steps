@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/sonner";
 import { AppShell } from "@/components/app-shell";
+import { FirebaseAnalytics } from "@/components/FirebaseAnalytics";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -31,6 +32,7 @@ export default function RootLayout({
     >
       <body className="min-h-full flex" suppressHydrationWarning>
         <AppShell>{children}</AppShell>
+        <FirebaseAnalytics />
         <Toaster richColors position="top-right" />
       </body>
     </html>

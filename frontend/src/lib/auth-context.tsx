@@ -12,10 +12,14 @@ import {
   onAuthStateChanged,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
+  signInWithPopup,
+  GoogleAuthProvider,
   signOut as firebaseSignOut,
 } from "firebase/auth";
 import { auth } from "@/lib/firebase";
 import { api, AppUser } from "@/lib/api";
+
+const googleProvider = new GoogleAuthProvider();
 
 interface AuthContextValue {
   user: User | null;
@@ -23,11 +27,36 @@ interface AuthContextValue {
   loading: boolean;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string, name: string, role: "recruiter" | "candidate") => Promise<void>;
+  signInWithGoogle: (role: "recruiter" | "candidate") => Promise<void>;
   signOut: () => Promise<void>;
   getIdToken: () => Promise<string | null>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
+
+async function ensureUserProfile(
+  firebaseUser: User,
+  role: "recruiter" | "candidate"
+): Promise<AppUser> {
+  const token = await firebaseUser.getIdToken();
+  try {
+    return await api.getMe(token);
+  } catch {
+    const email = firebaseUser.email || "";
+    const name =
+      firebaseUser.displayName || email.split("@")[0] || "User";
+    await api.registerUser({
+      uid: firebaseUser.uid,
+      email,
+      name,
+      role,
+    });
+    if (role === "candidate") {
+      await api.linkCandidate(token);
+    }
+    return { id: firebaseUser.uid, email, name, role };
+  }
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -80,6 +109,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const signInWithGoogle = async (role: "recruiter" | "candidate") => {
+    const result = await signInWithPopup(auth, googleProvider);
+    if (!result.user) return;
+    const profileData = await ensureUserProfile(result.user, role);
+    setProfile(profileData);
+  };
+
   const signOut = async () => {
     await firebaseSignOut(auth);
   };
@@ -91,7 +127,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   return (
     <AuthContext.Provider
-      value={{ user, profile, loading, signIn, signUp, signOut, getIdToken }}
+      value={{
+        user,
+        profile,
+        loading,
+        signIn,
+        signUp,
+        signInWithGoogle,
+        signOut,
+        getIdToken,
+      }}
     >
       {children}
     </AuthContext.Provider>
