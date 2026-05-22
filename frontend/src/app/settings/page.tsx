@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { api, RecruiterProfile } from "@/lib/api";
+import { usePortalProfile } from "@/lib/portal-profile-context";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -10,18 +11,17 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { PageSkeleton } from "@/components/loading";
 import { PageHeader } from "@/components/page-header";
-import { Section } from "@/components/section";
 import { toast } from "sonner";
 import { PageTransition } from "@/components/motion";
 
 export default function SettingsPage() {
+  const { recruiterProfile, portalReady, refreshRecruiterProfile } = usePortalProfile();
   const [profile, setProfile] = useState<RecruiterProfile | null>(null);
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    api.getRecruiterProfile().then(setProfile).catch(console.error).finally(() => setLoading(false));
-  }, []);
+    if (recruiterProfile) setProfile(recruiterProfile);
+  }, [recruiterProfile]);
 
   const update = (key: keyof RecruiterProfile, value: string | boolean) => {
     if (!profile) return;
@@ -33,6 +33,7 @@ export default function SettingsPage() {
     setSaving(true);
     try {
       await api.updateRecruiterProfile(profile);
+      await refreshRecruiterProfile();
       toast.success("Settings saved");
     } catch {
       toast.error("Failed to save");
@@ -41,7 +42,7 @@ export default function SettingsPage() {
     }
   };
 
-  if (loading) return <PageSkeleton rows={4} />;
+  if (!portalReady || !profile) return <PageSkeleton rows={4} />;
 
   return (
     <PageTransition className="space-y-6">

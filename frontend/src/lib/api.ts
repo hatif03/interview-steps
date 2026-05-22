@@ -11,8 +11,24 @@ async function getToken(): Promise<string | null> {
   return tokenProvider ? tokenProvider() : null;
 }
 
-async function request<T>(path: string, options?: RequestInit, retries = 1): Promise<T> {
-  for (let attempt = 0; attempt <= retries; attempt++) {
+export class ApiError extends Error {
+  status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
+async function request<T>(
+  path: string,
+  options?: RequestInit,
+  retries = 0
+): Promise<T> {
+  const method = (options?.method ?? "GET").toUpperCase();
+  const maxRetries = method === "GET" ? 0 : retries;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       const res = await fetch(`${API_BASE}${path}`, {
         ...options,
@@ -24,11 +40,13 @@ async function request<T>(path: string, options?: RequestInit, retries = 1): Pro
       if (!res.ok) {
         const error = await res.json().catch(() => ({ detail: res.statusText }));
         const detail = error.detail;
-        throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail) || `HTTP ${res.status}`);
+        const message =
+          typeof detail === "string" ? detail : JSON.stringify(detail) || `HTTP ${res.status}`;
+        throw new ApiError(res.status, message);
       }
       return res.json();
     } catch (err) {
-      if (attempt < retries) {
+      if (attempt < maxRetries) {
         await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
         continue;
       }
@@ -38,7 +56,7 @@ async function request<T>(path: string, options?: RequestInit, retries = 1): Pro
   throw new Error("Request failed");
 }
 
-async function authRequest<T>(path: string, options?: RequestInit, retries = 1): Promise<T> {
+async function authRequest<T>(path: string, options?: RequestInit, retries = 0): Promise<T> {
   const token = await getToken();
   return request<T>(
     path,
@@ -172,7 +190,7 @@ export const api = {
 
   // Auth
   registerUser: (data: { uid: string; email: string; name: string; role: string }) =>
-    request("/auth/register", { method: "POST", body: JSON.stringify(data) }),
+    request("/auth/register", { method: "POST", body: JSON.stringify(data) }, 1),
   getMe: (token: string) =>
     request<AppUser>("/auth/me", { headers: { Authorization: `Bearer ${token}` } }),
   linkCandidate: (token: string) =>
@@ -203,6 +221,40 @@ export const api = {
           headers: { Authorization: `Bearer ${token}` },
         })
       : authRequest<CandidateProfile>("/auth/candidate-profile", { method: "PUT", body: JSON.stringify(data) }),
+  /** Upload resume PDF to Supabase, extract text server-side, return autofill hints. */
+  uploadResume: async (file: File) => {
+    const token = await getToken();
+    const form = new FormData();
+    form.append("file", file);
+    const res = await fetch(`${API_BASE}/auth/parse-resume`, {
+      method: "POST",
+      body: form,
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({ detail: res.statusText }));
+      const detail = error.detail;
+      throw new ApiError(res.status, typeof detail === "string" ? detail : JSON.stringify(detail));
+    }
+    return res.json() as Promise<ResumeParseResult>;
+  },
+  /** Fetch a remote resume PDF (e.g. Google Drive) and regex-extract fields. */
+  extractResumeFromUrl: async (resume_url: string) => {
+    const token = await getToken();
+    const form = new FormData();
+    form.append("resume_url", resume_url.trim());
+    const res = await fetch(`${API_BASE}/auth/parse-resume`, {
+      method: "POST",
+      body: form,
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({ detail: res.statusText }));
+      const detail = error.detail;
+      throw new ApiError(res.status, typeof detail === "string" ? detail : JSON.stringify(detail));
+    }
+    return res.json() as Promise<ResumeParseResult>;
+  },
 
   // Public
   getPublicJob: (slug: string) => request<PublicJob>(`/public/jobs/${slug}`),
@@ -327,7 +379,26 @@ export interface CandidateProfile {
   best_ai_project?: string;
   research_work?: string;
   resume_url?: string;
+  resume_text?: string;
   onboarding_completed?: boolean;
+}
+
+export interface ResumeParseResult {
+  resume_text: string;
+  resume_url?: string;
+  extracted: Partial<{
+    phone: string;
+    location: string;
+    college: string;
+    branch: string;
+    graduation_year: number;
+    cgpa: number;
+    github_url: string;
+    linkedin_url: string;
+    skills: string[];
+    best_ai_project: string;
+    research_work: string;
+  }>;
 }
 
 export interface Application {

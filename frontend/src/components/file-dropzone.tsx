@@ -8,6 +8,7 @@ import { buttonVariants, Button } from "@/components/ui/button";
 interface FileDropzoneProps {
   accept?: string;
   onFile: (file: File) => void;
+  onClear?: () => void;
   disabled?: boolean;
   label?: string;
   hint?: string;
@@ -16,6 +17,7 @@ interface FileDropzoneProps {
 export function FileDropzone({
   accept = ".csv,.xlsx,.xls",
   onFile,
+  onClear,
   disabled,
   label = "Drop CSV or Excel file here",
   hint = "Supports .csv, .xlsx, .xls",
@@ -39,7 +41,10 @@ export function FileDropzone({
     if (f) handleFile(f);
   };
 
-  const clear = () => setFile(null);
+  const clear = () => {
+    setFile(null);
+    onClear?.();
+  };
 
   return (
     <div

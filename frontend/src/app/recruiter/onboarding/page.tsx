@@ -8,15 +8,15 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { api, SCORING_PRESETS } from "@/lib/api";
+import { api } from "@/lib/api";
+import { APP_NAME } from "@/lib/app-config";
+import { usePortalProfile } from "@/lib/portal-profile-context";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/page-header";
 import { AppContainer } from "@/components/app-container";
 import { motion } from "framer-motion";
 import { CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { LinkButton } from "@/components/link-button";
-import Link from "next/link";
 
 const STEPS = [
   { id: "company", title: "Company", description: "Tell us about your organization" },
@@ -31,6 +31,7 @@ const HIRING_VOLUMES = ["1-5 roles/year", "6-20 roles/year", "20+ roles/year"];
 
 export default function RecruiterOnboardingPage() {
   const router = useRouter();
+  const { setRecruiterProfileLocal, refreshRecruiterProfile } = usePortalProfile();
   const [step, setStep] = useState(0);
   const [loading, setLoading] = useState(false);
   const [form, setForm] = useState({
@@ -53,15 +54,39 @@ export default function RecruiterOnboardingPage() {
     return true;
   };
 
-  const finish = async () => {
+  const saveDraft = async () => {
+    try {
+      const saved = await api.updateRecruiterProfile(form);
+      setRecruiterProfileLocal(saved);
+    } catch {
+      toast.error("Failed to save progress");
+      throw new Error("draft save failed");
+    }
+  };
+
+  const handleNext = async () => {
     setLoading(true);
     try {
-      await api.updateRecruiterProfile({
+      await saveDraft();
+      setStep((s) => s + 1);
+    } catch {
+      // toast already shown
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const finish = async (redirectTo = "/jobs/new") => {
+    setLoading(true);
+    try {
+      const saved = await api.updateRecruiterProfile({
         ...form,
         onboarding_completed: true,
       });
-      toast.success("Welcome to AI Screener!");
-      router.push("/jobs/new");
+      setRecruiterProfileLocal(saved);
+      await refreshRecruiterProfile();
+      toast.success(`Welcome to ${APP_NAME}!`);
+      router.push(redirectTo);
     } catch {
       toast.error("Failed to save profile");
     } finally {
@@ -72,16 +97,16 @@ export default function RecruiterOnboardingPage() {
   return (
     <AppContainer size="narrow">
       <PageHeader
-        title="Welcome to AI Screener"
+        title={`Welcome to ${APP_NAME}`}
         description="Let's set up your recruiter workspace in a few quick steps."
         className="mb-6"
       />
       <StepWizard
         steps={STEPS}
         currentStep={step}
-        onNext={() => setStep((s) => s + 1)}
+        onNext={handleNext}
         onBack={() => setStep((s) => s - 1)}
-        onFinish={finish}
+        onFinish={() => finish("/jobs/new")}
         isLastStep={step === STEPS.length - 1}
         finishLabel="Create first job"
         canProceed={canProceed()}
@@ -195,7 +220,14 @@ export default function RecruiterOnboardingPage() {
               <p className="text-muted-foreground text-sm mb-6">
                 {form.company_name} is ready to start screening candidates with AI.
               </p>
-              <LinkButton href="/" variant="outline">Go to dashboard instead</LinkButton>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={loading}
+                onClick={() => finish("/")}
+              >
+                {loading ? "Saving..." : "Go to dashboard instead"}
+              </Button>
             </CardContent>
           </Card>
         )}

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { APP_NAME } from "@/lib/app-config";
 import { usePathname } from "next/navigation";
 import {
   LayoutDashboard,
@@ -29,8 +30,8 @@ export function Sidebar() {
             <Brain className="h-4 w-4 text-primary-foreground" />
           </div>
           <div>
-            <h1 className="text-sm font-bold tracking-tight">AI Screener</h1>
-            <p className="text-[10px] text-muted-foreground">Visl AI Labs</p>
+            <h1 className="text-sm font-bold tracking-tight">{APP_NAME}</h1>
+            <p className="text-[10px] text-muted-foreground">Recruiter</p>
           </div>
         </div>
       </div>
@@ -61,13 +62,11 @@ export function Sidebar() {
           className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground mt-4"
         >
           <Users className="h-4 w-4" />
-          Candidate Portal
+          Candidate
         </Link>
       </nav>
       <div className="p-4 border-t border-border">
-        <p className="text-xs text-muted-foreground text-center">
-          Screening + Mock Interviews v2.0
-        </p>
+        <p className="text-xs text-muted-foreground text-center">{APP_NAME}</p>
       </div>
     </aside>
   );

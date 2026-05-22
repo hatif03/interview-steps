@@ -83,6 +83,7 @@ async def apply_to_job(
         "research_work": body.research_work or profile.get("research_work", ""),
         "github_url": body.github_url or profile.get("github_url", ""),
         "resume_url": body.resume_url or profile.get("resume_url", ""),
+        "resume_text": profile.get("resume_text"),
         "user_id": user["id"],
         "source": "form",
         "applied_at": _now_iso(),

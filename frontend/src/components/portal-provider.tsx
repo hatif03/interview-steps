@@ -1,6 +1,7 @@
 "use client";
 
 import { usePathname } from "next/navigation";
+import { isCandidatePortalPath } from "@/lib/route-utils";
 
 export type PortalType = "recruiter" | "candidate" | "auth-recruiter" | "auth-candidate";
 
@@ -8,13 +9,13 @@ export function getPortalFromPath(pathname: string): PortalType {
   if (pathname.startsWith("/candidate/sign-in") || pathname.startsWith("/candidate/sign-up")) {
     return "auth-candidate";
   }
-  if (pathname.startsWith("/sign-in") || pathname.startsWith("/auth/callback")) {
+  if (pathname.startsWith("/sign-in")) {
     return "auth-recruiter";
   }
   if (pathname.startsWith("/apply/")) {
     return "auth-candidate";
   }
-  if (pathname.startsWith("/candidate") || pathname.startsWith("/apply")) {
+  if (isCandidatePortalPath(pathname) || pathname.startsWith("/apply")) {
     return "candidate";
   }
   return "recruiter";

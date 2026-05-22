@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { api, Job } from "@/lib/api";
+import { useAuth } from "@/lib/auth-context";
+import { isRecruiter } from "@/lib/auth-utils";
 import { StatCard } from "@/components/stat-card";
 import { StaggerList } from "@/components/motion";
 import { EmptyState } from "@/components/empty-state";
@@ -16,12 +18,18 @@ import { Section } from "@/components/section";
 import { Briefcase, Users, GitGraph, Plus, ArrowRight } from "lucide-react";
 
 export default function DashboardPage() {
+  const { profile, user, loading: authLoading } = useAuth();
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    if (authLoading || !isRecruiter(profile, user)) {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
     api.listJobs().then(setJobs).catch(console.error).finally(() => setLoading(false));
-  }, []);
+  }, [authLoading, profile, user]);
 
   const totalCandidates = jobs.reduce((s, j) => s + (j.candidate_count || 0), 0);
   const openJobs = jobs.filter((j) => j.status === "open").length;

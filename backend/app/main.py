@@ -1,11 +1,27 @@
+import asyncio
+import logging
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.api import jobs, candidates, evaluations, tests, interviews, mock_interviews, auth, public, candidate_portal
 
+
+class _SuppressReloadNoise(logging.Filter):
+    """Hide CancelledError/KeyboardInterrupt tracebacks during uvicorn --reload on Windows."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.exc_info and record.exc_info[0] in (asyncio.CancelledError, KeyboardInterrupt):
+            return False
+        return True
+
+
+for _logger_name in ("uvicorn.error", "uvicorn"):
+    logging.getLogger(_logger_name).addFilter(_SuppressReloadNoise())
+
 app = FastAPI(
-    title="AI Candidate Screening Platform",
-    description="AI-powered recruitment pipeline with mock voice interviews",
+    title="Interview Steps",
+    description="Candidate screening, pipeline management, and mock interviews",
     version="2.0.0",
 )
 

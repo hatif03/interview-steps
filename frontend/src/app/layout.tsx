@@ -16,9 +16,11 @@ const montserrat = Montserrat({
   subsets: ["latin"],
 });
 
+import { APP_NAME } from "@/lib/app-config";
+
 export const metadata: Metadata = {
-  title: "AI Screening Platform | Visl AI Labs",
-  description: "AI-powered candidate screening and mock voice interviews",
+  title: APP_NAME,
+  description: "Candidate screening, pipeline management, and mock interviews",
 };
 
 export default function RootLayout({

@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { Moon, Sun, LogOut } from "lucide-react";
+import { Moon, Sun, LogOut, AlertCircle } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useAuth } from "@/lib/auth-context";
-import { api } from "@/lib/api";
+import { usePortalProfile } from "@/lib/portal-profile-context";
+import { isRecruiter } from "@/lib/auth-utils";
 import { AppSidebar } from "@/components/app-sidebar";
 import { AppBreadcrumb } from "@/components/app-breadcrumb";
 import { AppContainer } from "@/components/app-container";
@@ -25,39 +26,37 @@ import { Separator } from "@/components/ui/separator";
 export function RecruiterShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { user, profile, loading, signOut, getIdToken } = useAuth();
+  const { user, profile, loading, signOut } = useAuth();
   const { theme, setTheme } = useTheme();
-  const [checkingOnboarding, setCheckingOnboarding] = useState(true);
+  const {
+    portalReady,
+    profileError,
+    recruiterOnboardingComplete,
+    refreshRecruiterProfile,
+  } = usePortalProfile();
+  const redirected = useRef(false);
+
+  const isRecruiterUser = isRecruiter(profile, user);
 
   useEffect(() => {
-    if (loading || !user || pathname.startsWith("/recruiter/onboarding") || pathname === "/sign-in") {
-      setCheckingOnboarding(false);
-      return;
-    }
-    if (profile?.role !== "recruiter") {
+    if (loading || !portalReady || !user) return;
+    if (pathname.startsWith("/recruiter/onboarding") || pathname === "/sign-in") return;
+
+    if (!isRecruiterUser) {
       router.replace("/candidate");
       return;
     }
-    getIdToken().then(async (token) => {
-      if (!token) {
-        setCheckingOnboarding(false);
-        return;
-      }
-      try {
-        const rp = await api.getRecruiterProfile(token);
-        if (!rp.onboarding_completed) router.replace("/recruiter/onboarding");
-      } catch {
-        router.replace("/recruiter/onboarding");
-      } finally {
-        setCheckingOnboarding(false);
-      }
-    });
-  }, [loading, user, profile, pathname, router, getIdToken]);
 
-  if (loading || checkingOnboarding) {
+    if (recruiterOnboardingComplete === false && !redirected.current) {
+      redirected.current = true;
+      router.replace("/recruiter/onboarding");
+    }
+  }, [loading, portalReady, user, profile, pathname, router, recruiterOnboardingComplete, isRecruiterUser]);
+
+  if (loading || !portalReady || (user && !isRecruiterUser)) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-muted/40">
-        <div className="animate-pulse text-muted-foreground text-sm">Loading...</div>
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <p className="text-sm text-muted-foreground animate-pulse">Loading workspace...</p>
       </div>
     );
   }
@@ -109,9 +108,26 @@ export function RecruiterShell({ children }: { children: React.ReactNode }) {
             </DropdownMenu>
           </div>
         </header>
+
+        {profileError && (
+          <div className="mx-4 mt-4 flex items-center justify-between gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm">
+            <div className="flex items-center gap-2 text-destructive">
+              <AlertCircle className="size-4 shrink-0" />
+              <span>{profileError}</span>
+            </div>
+            <Button variant="outline" size="sm" onClick={() => refreshRecruiterProfile()}>
+              Retry
+            </Button>
+          </div>
+        )}
+
         <main className="flex-1 p-6 md:p-8">
           <AppContainer size="recruiter">
-            <PageTransition>{children}</PageTransition>
+            {loading || !portalReady ? (
+              <div className="animate-pulse text-muted-foreground text-sm py-8">Loading workspace...</div>
+            ) : (
+              <PageTransition>{children}</PageTransition>
+            )}
           </AppContainer>
         </main>
       </SidebarInset>

@@ -21,11 +21,13 @@ async def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
     if user_result.data:
         return user_result.data[0]
 
+    metadata_role = decoded.get("role")
+    role = metadata_role if metadata_role in ("recruiter", "candidate") else "candidate"
     return {
         "id": uid,
         "email": decoded.get("email", ""),
         "name": decoded.get("name", decoded.get("email", "")),
-        "role": "candidate",
+        "role": role,
     }
 
 

@@ -3,6 +3,7 @@
 import { motion } from "framer-motion";
 import { Brain, Sparkles, CheckCircle2 } from "lucide-react";
 import { RoleSwitcher } from "@/components/auth/role-switcher";
+import { APP_NAME } from "@/lib/app-config";
 
 interface AuthLayoutProps {
   children: React.ReactNode;
@@ -20,7 +21,7 @@ export function AuthLayout({
   features,
 }: AuthLayoutProps) {
   const Icon = variant === "candidate" ? Sparkles : Brain;
-  const brandName = variant === "candidate" ? "Career Portal" : "AI Screener";
+  const portalLabel = variant === "candidate" ? "Candidate" : "Recruiter";
 
   return (
     <div className="min-h-screen w-full grid lg:grid-cols-2">
@@ -38,7 +39,8 @@ export function AuthLayout({
           <div className="h-10 w-10 rounded-xl bg-white/20 backdrop-blur flex items-center justify-center">
             <Icon className="h-5 w-5" />
           </div>
-          <span className="font-semibold text-lg">{brandName}</span>
+          <span className="font-semibold text-lg">{APP_NAME}</span>
+          <span className="text-sm text-white/70">{portalLabel}</span>
         </div>
         <div className="relative space-y-6 max-w-md">
           <div>
@@ -54,7 +56,7 @@ export function AuthLayout({
             ))}
           </ul>
         </div>
-        <p className="relative text-sm text-white/60">Visl AI Labs · Screening Platform</p>
+        <p className="relative text-sm text-white/60">{APP_NAME}</p>
       </motion.div>
 
       <div className="min-h-screen bg-background flex flex-col justify-center px-6 py-12 sm:px-10 lg:px-16">
@@ -63,7 +65,8 @@ export function AuthLayout({
             <div className="h-9 w-9 rounded-lg bg-primary flex items-center justify-center">
               <Icon className="h-4 w-4 text-primary-foreground" />
             </div>
-            <span className="font-semibold">{brandName}</span>
+            <span className="font-semibold">{APP_NAME}</span>
+            <span className="text-xs text-muted-foreground">{portalLabel}</span>
           </div>
           <RoleSwitcher />
           {children}

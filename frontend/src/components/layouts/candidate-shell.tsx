@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
@@ -12,11 +12,14 @@ import {
   Sun,
   LogOut,
   Sparkles,
+  AlertCircle,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useAuth } from "@/lib/auth-context";
+import { usePortalProfile } from "@/lib/portal-profile-context";
+import { isRecruiter } from "@/lib/auth-utils";
+import { APP_NAME } from "@/lib/app-config";
 import { cn } from "@/lib/utils";
-import { api } from "@/lib/api";
 import { AppContainer } from "@/components/app-container";
 import { PageTransition } from "@/components/motion";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -41,57 +44,43 @@ const PUBLIC_PATHS = ["/candidate/sign-in", "/candidate/sign-up"];
 export function CandidateShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { user, profile, loading, signOut, getIdToken } = useAuth();
+  const { user, profile, loading, signOut } = useAuth();
   const { theme, setTheme } = useTheme();
+  const {
+    portalReady,
+    profileError,
+    candidateOnboardingComplete,
+    refreshCandidateProfile,
+  } = usePortalProfile();
   const isPublic = PUBLIC_PATHS.some((p) => pathname.startsWith(p));
-  const [checkingOnboarding, setCheckingOnboarding] = useState(true);
+  const redirected = useRef(false);
 
   useEffect(() => {
-    if (loading || isPublic) {
-      setCheckingOnboarding(false);
-      return;
-    }
+    if (loading || !portalReady || isPublic) return;
+
     if (!user) {
       router.push("/candidate/sign-in");
       return;
     }
-    if (profile?.role === "recruiter") {
+
+    if (isRecruiter(profile, user)) {
       router.replace("/");
       return;
     }
-    if (pathname.startsWith("/candidate/onboarding")) {
-      setCheckingOnboarding(false);
-      return;
+
+    if (pathname.startsWith("/candidate/onboarding")) return;
+
+    if (candidateOnboardingComplete === false && !redirected.current) {
+      redirected.current = true;
+      router.replace("/candidate/onboarding");
     }
-    getIdToken().then(async (token) => {
-      if (!token) {
-        setCheckingOnboarding(false);
-        return;
-      }
-      try {
-        const cp = await api.getCandidateProfile(token);
-        if (!cp.onboarding_completed) router.replace("/candidate/onboarding");
-      } catch {
-        router.replace("/candidate/onboarding");
-      } finally {
-        setCheckingOnboarding(false);
-      }
-    });
-  }, [loading, user, profile, pathname, router, getIdToken, isPublic]);
+  }, [loading, portalReady, user, profile, pathname, router, isPublic, candidateOnboardingComplete]);
 
   if (isPublic) return <>{children}</>;
 
-  if (loading || checkingOnboarding) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <div className="animate-pulse text-muted-foreground text-sm">Loading...</div>
-      </div>
-    );
-  }
+  if (!user && !loading) return null;
 
-  if (!user) return null;
-
-  const initials = (profile?.name || user.email || "C")
+  const initials = (profile?.name || user?.email || "C")
     .split(" ")
     .map((n) => n[0])
     .join("")
@@ -107,7 +96,7 @@ export function CandidateShell({ children }: { children: React.ReactNode }) {
               <div className="h-9 w-9 rounded-xl bg-primary flex items-center justify-center shadow-sm">
                 <Sparkles className="h-4 w-4 text-primary-foreground" />
               </div>
-              <span className="font-semibold text-base">Career Portal</span>
+              <span className="font-semibold text-base">{APP_NAME}</span>
             </Link>
 
             <nav className="hidden md:flex items-center gap-1">
@@ -168,9 +157,27 @@ export function CandidateShell({ children }: { children: React.ReactNode }) {
         </AppContainer>
       </header>
 
+      {profileError && (
+        <AppContainer size="candidate" className="px-4 sm:px-6 mt-4">
+          <div className="flex items-center justify-between gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm">
+            <div className="flex items-center gap-2 text-destructive">
+              <AlertCircle className="size-4 shrink-0" />
+              <span>{profileError}</span>
+            </div>
+            <Button variant="outline" size="sm" onClick={() => refreshCandidateProfile()}>
+              Retry
+            </Button>
+          </div>
+        </AppContainer>
+      )}
+
       <main className="flex-1 py-8 pb-24 md:pb-10">
         <AppContainer size="candidate" className="px-4 sm:px-6">
-          <PageTransition>{children}</PageTransition>
+          {loading || !portalReady ? (
+            <div className="animate-pulse text-muted-foreground text-sm py-8">Loading...</div>
+          ) : (
+            <PageTransition>{children}</PageTransition>
+          )}
         </AppContainer>
       </main>
 

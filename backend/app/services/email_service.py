@@ -20,7 +20,7 @@ TEST_EMAIL_TEMPLATE = """
     </div>
     <p style="color: #6b7280; font-size: 14px;">If the button doesn't work, copy and paste this link: {test_link}</p>
     <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 20px 0;">
-    <p style="color: #6b7280; font-size: 12px;">This is an automated message from the AI Candidate Screening Platform.</p>
+    <p style="color: #6b7280; font-size: 12px;">This is an automated message from Interview Steps.</p>
   </div>
 </body>
 </html>
@@ -42,7 +42,7 @@ INTERVIEW_EMAIL_TEMPLATE = """
     </div>
     <p>Please join the meeting on time. We look forward to speaking with you!</p>
     <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 20px 0;">
-    <p style="color: #6b7280; font-size: 12px;">This is an automated message from the AI Candidate Screening Platform.</p>
+    <p style="color: #6b7280; font-size: 12px;">This is an automated message from Interview Steps.</p>
   </div>
 </body>
 </html>

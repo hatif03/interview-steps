@@ -5,8 +5,9 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { Building2, MapPin, Briefcase, CheckCircle2 } from "lucide-react";
-import { api, PublicJob, ApplyFormPayload, CandidateProfile } from "@/lib/api";
+import { api, PublicJob, ApplyFormPayload } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
+import { usePortalProfile } from "@/lib/portal-profile-context";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { LinkButton } from "@/components/link-button";
@@ -23,12 +24,12 @@ type View = "preview" | "form" | "success";
 export default function ApplyPage() {
   const { slug } = useParams<{ slug: string }>();
   const router = useRouter();
-  const { user, profile, getIdToken } = useAuth();
+  const { user, profile } = useAuth();
+  const { candidateProfile, portalReady, candidateOnboardingComplete } = usePortalProfile();
   const [job, setJob] = useState<PublicJob | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [view, setView] = useState<View>("preview");
-  const [candidateProfile, setCandidateProfile] = useState<CandidateProfile | null>(null);
   const [form, setForm] = useState<ApplyFormPayload>({});
 
   useEffect(() => {
@@ -36,30 +37,25 @@ export default function ApplyPage() {
   }, [slug]);
 
   useEffect(() => {
-    if (!user || profile?.role !== "candidate") return;
-    getIdToken().then(async (token) => {
-      if (!token) return;
-      try {
-        const cp = await api.getCandidateProfile(token);
-        setCandidateProfile(cp);
-        if (!cp.onboarding_completed) {
-          router.push(`/candidate/onboarding?redirect=/apply/${slug}`);
-          return;
-        }
-        setForm({
-          college: cp.college,
-          branch: cp.branch,
-          cgpa: cp.cgpa,
-          best_ai_project: cp.best_ai_project,
-          research_work: cp.research_work,
-          github_url: cp.github_url,
-          resume_url: cp.resume_url,
-        });
-      } catch {
-        router.push("/candidate/onboarding");
-      }
-    });
-  }, [user, profile, slug, router, getIdToken]);
+    if (!user || profile?.role !== "candidate" || !portalReady) return;
+
+    if (candidateOnboardingComplete === false) {
+      router.push(`/candidate/onboarding?redirect=/apply/${slug}`);
+      return;
+    }
+
+    if (candidateProfile?.onboarding_completed) {
+      setForm({
+        college: candidateProfile.college,
+        branch: candidateProfile.branch,
+        cgpa: candidateProfile.cgpa,
+        best_ai_project: candidateProfile.best_ai_project,
+        research_work: candidateProfile.research_work,
+        github_url: candidateProfile.github_url,
+        resume_url: candidateProfile.resume_url,
+      });
+    }
+  }, [user, profile, slug, router, portalReady, candidateProfile, candidateOnboardingComplete]);
 
   const handleApplyClick = () => {
     if (!user) {

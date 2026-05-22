@@ -41,6 +41,7 @@ class CandidateProfileUpdate(BaseModel):
     best_ai_project: Optional[str] = None
     research_work: Optional[str] = None
     resume_url: Optional[str] = None
+    resume_text: Optional[str] = None
     onboarding_completed: Optional[bool] = None
 
 
@@ -58,7 +59,14 @@ class CandidateProfileResponse(BaseModel):
     best_ai_project: Optional[str] = None
     research_work: Optional[str] = None
     resume_url: Optional[str] = None
+    resume_text: Optional[str] = None
     onboarding_completed: bool = False
+
+
+class ResumeParseResponse(BaseModel):
+    resume_text: str
+    resume_url: Optional[str] = None
+    extracted: dict = Field(default_factory=dict)
 
 
 DEFAULT_APPLY_FORM_CONFIG = {

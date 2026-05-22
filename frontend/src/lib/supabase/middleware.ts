@@ -1,5 +1,11 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { isCandidatePortalPath, isRecruiterPortalPath } from "@/lib/route-utils";
+
+function resolveUserRole(user: { user_metadata?: Record<string, unknown> }): string | undefined {
+  const role = user.user_metadata?.role;
+  return role === "recruiter" || role === "candidate" ? role : undefined;
+}
 
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
@@ -28,26 +34,32 @@ export async function updateSession(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   const path = request.nextUrl.pathname;
+  const role = user ? resolveUserRole(user) : undefined;
 
-  const isRecruiterRoute =
-    path === "/" ||
-    path.startsWith("/jobs") ||
-    path.startsWith("/candidates") ||
-    path.startsWith("/pipeline") ||
-    path.startsWith("/settings") ||
-    path.startsWith("/recruiter");
+  const isRecruiterRoute = isRecruiterPortalPath(path);
 
   const isCandidateRoute =
-    path.startsWith("/candidate") &&
+    isCandidatePortalPath(path) &&
     !path.startsWith("/candidate/sign-in") &&
     !path.startsWith("/candidate/sign-up");
 
   const isPublic =
     path.startsWith("/sign-in") ||
-    path.startsWith("/auth/callback") ||
     path.startsWith("/apply/") ||
     path.startsWith("/candidate/sign-in") ||
     path.startsWith("/candidate/sign-up");
+
+  if (user && role === "candidate" && isRecruiterRoute) {
+    const url = request.nextUrl.clone();
+    url.pathname = "/candidate";
+    return NextResponse.redirect(url);
+  }
+
+  if (user && role === "recruiter" && isCandidateRoute) {
+    const url = request.nextUrl.clone();
+    url.pathname = "/";
+    return NextResponse.redirect(url);
+  }
 
   if (!user && isRecruiterRoute && path !== "/sign-in") {
     const url = request.nextUrl.clone();
@@ -64,7 +76,7 @@ export async function updateSession(request: NextRequest) {
 
   if (user && path === "/sign-in") {
     const url = request.nextUrl.clone();
-    url.pathname = "/";
+    url.pathname = role === "candidate" ? "/candidate" : "/";
     return NextResponse.redirect(url);
   }
 

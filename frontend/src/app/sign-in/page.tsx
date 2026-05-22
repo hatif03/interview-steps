@@ -9,7 +9,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { GoogleSignInButton } from "@/components/GoogleSignInButton";
+import { validatePassword, PASSWORD_REQUIREMENTS } from "@/lib/password";
+import { authErrorMessage, EmailConfirmationRequiredError } from "@/lib/auth-errors";
 
 const FEATURES = [
   "AI-powered resume screening at scale",
@@ -24,10 +25,22 @@ export default function RecruiterSignInPage() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (mode === "signup") {
+      const passwordError = validatePassword(password);
+      if (passwordError) {
+        toast.error(passwordError);
+        return;
+      }
+      if (password !== confirmPassword) {
+        toast.error("Passwords do not match.");
+        return;
+      }
+    }
     setLoading(true);
     try {
       if (mode === "signup") {
@@ -38,8 +51,14 @@ export default function RecruiterSignInPage() {
         await signIn(email, password);
         router.push("/");
       }
-    } catch {
-      toast.error(mode === "signup" ? "Sign up failed" : "Sign in failed");
+    } catch (err) {
+      if (err instanceof EmailConfirmationRequiredError) {
+        toast.success("Account created. Check your email to confirm, then sign in.");
+        setMode("signin");
+      } else {
+        toast.error(authErrorMessage(err));
+      }
+      return;
     } finally {
       setLoading(false);
     }
@@ -56,25 +75,23 @@ export default function RecruiterSignInPage() {
         title={mode === "signin" ? "Recruiter Sign In" : "Create Recruiter Account"}
         description={mode === "signin" ? "Welcome back — sign in to your workspace." : "Get started with your recruiter account."}
       >
-        <GoogleSignInButton role="recruiter" onSuccess={() => router.push("/recruiter/onboarding")} />
-        <div className="relative">
-          <div className="absolute inset-0 flex items-center">
-            <span className="w-full border-t" />
-          </div>
-          <div className="relative flex justify-center text-xs uppercase">
-            <span className="bg-card px-2 text-muted-foreground">Or continue with email</span>
-          </div>
-        </div>
         <form onSubmit={handleSubmit} className="space-y-4">
           {mode === "signup" && (
             <div className="space-y-2">
               <Label htmlFor="name">Name</Label>
-              <Input id="name" value={name} onChange={(e) => setName(e.target.value)} required />
+              <Input id="name" value={name} onChange={(e) => setName(e.target.value)} required autoComplete="name" />
             </div>
           )}
           <div className="space-y-2">
             <Label htmlFor="email">Email</Label>
-            <Input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+            <Input
+              id="email"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              autoComplete="email"
+            />
           </div>
           <div className="space-y-2">
             <Label htmlFor="password">Password</Label>
@@ -84,9 +101,26 @@ export default function RecruiterSignInPage() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
-              minLength={6}
+              minLength={mode === "signup" ? 12 : undefined}
+              autoComplete={mode === "signup" ? "new-password" : "current-password"}
             />
+            {mode === "signup" && (
+              <p className="text-xs text-muted-foreground">{PASSWORD_REQUIREMENTS}</p>
+            )}
           </div>
+          {mode === "signup" && (
+            <div className="space-y-2">
+              <Label htmlFor="confirmPassword">Confirm password</Label>
+              <Input
+                id="confirmPassword"
+                type="password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                required
+                autoComplete="new-password"
+              />
+            </div>
+          )}
           <Button type="submit" className="w-full" disabled={loading}>
             {loading ? "Please wait..." : mode === "signin" ? "Sign In" : "Create Account"}
           </Button>

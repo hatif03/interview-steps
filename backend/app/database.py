@@ -24,9 +24,11 @@ def verify_supabase_token(jwt: str) -> dict:
         raise ValueError("Invalid token")
 
     metadata = user.user_metadata or {}
+    role = metadata.get("role")
     return {
         "uid": user.id,
         "sub": user.id,
         "email": user.email or "",
         "name": metadata.get("name") or metadata.get("full_name") or user.email or "",
+        "role": role if role in ("recruiter", "candidate") else None,
     }

@@ -10,6 +10,7 @@ import {
   Settings,
   Brain,
 } from "lucide-react";
+import { APP_NAME } from "@/lib/app-config";
 import {
   Sidebar,
   SidebarContent,
@@ -48,7 +49,7 @@ export function AppSidebar() {
                     <Brain className="size-4" />
                   </div>
                   <div className="grid flex-1 text-left text-sm leading-tight">
-                    <span className="truncate font-semibold">AI Screener</span>
+                    <span className="truncate font-semibold">{APP_NAME}</span>
                     <span className="truncate text-xs text-muted-foreground">Recruiter</span>
                   </div>
                 </Link>
@@ -86,7 +87,7 @@ export function AppSidebar() {
       </SidebarContent>
       <SidebarFooter className="border-t border-sidebar-border p-3">
         <p className="text-[10px] text-muted-foreground text-center group-data-[collapsible=icon]:hidden">
-          Screening Platform v2
+          Recruiter portal
         </p>
       </SidebarFooter>
       <SidebarRail />
