@@ -6,6 +6,7 @@ import { api, Application, STAGE_LABELS } from "@/lib/api";
 import { PageSkeleton } from "@/components/loading";
 import { EmptyState } from "@/components/empty-state";
 import { StaggerList, StaggerItem } from "@/components/motion";
+import { EliminationBanner } from "@/components/candidate/EliminationBanner";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
@@ -16,13 +17,15 @@ const STAGE_PROGRESS: Record<string, number> = {
   uploaded: 10, resume_processed: 20, evaluating: 35, evaluated: 50, ranked: 55,
   assessment_assigned: 62, assessment_completed: 70, test_sent: 65, test_completed: 75,
   shortlisted: 78, ai_interview_assigned: 85, ai_interview_completed: 90,
-  mock_interview_assigned: 85, mock_interview_completed: 90,
-  interview_scheduled: 100, error: 0,
+  mock_interview_assigned: 85,   mock_interview_completed: 90,
+  interview_scheduled: 100,
+  not_advanced: 100,
+  error: 0,
 };
 
-function outcomeLabel(outcome?: string) {
+function outcomeLabel(outcome?: string, eliminated?: boolean) {
+  if (eliminated || outcome === "not_shortlisted") return "Application closed";
   if (outcome === "shortlisted") return "Advanced to next round";
-  if (outcome === "not_shortlisted") return "View feedback & suggestions";
   return null;
 }
 
@@ -49,10 +52,10 @@ export default function ApplicationsPage() {
       ) : (
         <StaggerList className="space-y-4">
           {applications.map((app) => {
-            const outcomeText = outcomeLabel(app.latest_outcome);
+            const outcomeText = outcomeLabel(app.latest_outcome, app.is_eliminated);
             return (
               <StaggerItem key={app.candidate_id}>
-                <Card>
+                <Card className={app.is_eliminated ? "border-muted" : ""}>
                   <CardHeader className="pb-2">
                     <div className="flex justify-between items-start">
                       <div>
@@ -61,12 +64,16 @@ export default function ApplicationsPage() {
                       </div>
                       <div className="flex gap-2 flex-wrap justify-end">
                         <Badge variant="outline" className="capitalize">{app.source}</Badge>
-                        {app.rank && <Badge>Rank #{app.rank}</Badge>}
-                        {outcomeText && <Badge variant="secondary">{outcomeText}</Badge>}
+                        {app.rank && !app.is_eliminated && <Badge>Rank #{app.rank}</Badge>}
+                        {outcomeText && <Badge variant={app.is_eliminated ? "secondary" : "outline"}>{outcomeText}</Badge>}
                       </div>
                     </div>
                   </CardHeader>
                   <CardContent className="space-y-4">
+                    {app.is_eliminated && (
+                      <EliminationBanner message={app.elimination_message} candidateId={app.candidate_id} className="text-left" />
+                    )}
+                    {!app.is_eliminated && (
                     <div>
                       <div className="flex justify-between text-sm mb-2">
                         <span className="font-medium">{STAGE_LABELS[app.pipeline_stage] || app.pipeline_stage}</span>
@@ -74,7 +81,8 @@ export default function ApplicationsPage() {
                       </div>
                       <Progress value={STAGE_PROGRESS[app.pipeline_stage] || 0} />
                     </div>
-                    {app.status_message && (
+                    )}
+                    {app.status_message && !app.is_eliminated && (
                       <p className="text-sm text-muted-foreground bg-muted/50 rounded-lg p-3">{app.status_message}</p>
                     )}
                     {app.composite_score != null && (
@@ -85,7 +93,7 @@ export default function ApplicationsPage() {
                         Applied {new Date(app.applied_at).toLocaleDateString()}
                       </p>
                       <LinkButton href={`/candidate/applications/${app.candidate_id}`} variant="ghost" size="sm">
-                        Round timeline <ChevronRight className="h-4 w-4 ml-1" />
+                        {app.is_eliminated ? "View feedback" : "Round timeline"} <ChevronRight className="h-4 w-4 ml-1" />
                       </LinkButton>
                     </div>
                   </CardContent>

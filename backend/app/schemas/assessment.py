@@ -63,13 +63,41 @@ class SubmitAssessmentRequest(BaseModel):
 
 class ShortlistRequest(BaseModel):
     job_id: str
-    assignment_ids: list[str]
     outcomes: dict[str, str]
     send_email: bool = True
 
 
 class AiInterviewShortlistRequest(BaseModel):
     job_id: str
-    interview_ids: list[str]
     outcomes: dict[str, str]
     send_email: bool = True
+
+
+class RemindRequest(BaseModel):
+    job_id: str
+    round_type: str  # platform_test | ai_interview
+    source_ids: list[str] | None = None
+
+
+class CloseRoundRequest(BaseModel):
+    job_id: str
+    round_type: str
+
+
+class RerankRequest(BaseModel):
+    job_id: str
+
+
+class AdvanceRequest(BaseModel):
+    job_id: str
+    round_type: str  # platform_test | ai_interview
+    source_ids: list[str] | None = None
+    top_n: int | None = None
+    send_email: bool = True
+    auto_assign: bool = True
+
+
+class RejectRequest(BaseModel):
+    job_id: str
+    round_type: str
+    source_ids: list[str]

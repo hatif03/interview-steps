@@ -7,6 +7,7 @@ from app.schemas.mock_interview import (
 )
 from app.supabase_repo import get_db
 from app.services import mock_interview_service as svc
+from app.services.mock_interview_enrichment import enrich_mock_interview
 
 router = APIRouter()
 
@@ -57,12 +58,20 @@ async def get_candidate_interviews(candidate_id: str):
 @router.get("/user/{user_id}")
 async def get_user_interviews(user_id: str, email: str | None = None):
     interviews = svc.get_interviews_for_user(user_id, email)
-    db = get_db()
-    enriched = []
-    for iv in interviews:
-        fb = db.query("mock_feedback", filters=[("interview_id", "eq", iv["id"])])
-        enriched.append({**iv, "feedback": fb.data[0] if fb.data else None})
+    enriched = [enrich_mock_interview(iv) for iv in interviews]
     return {"interviews": enriched, "total": len(enriched)}
+
+
+@router.get("/feedback/{interview_id}")
+async def get_feedback(interview_id: str, user_id: str | None = None):
+    db = get_db()
+    filters = [("interview_id", "eq", interview_id)]
+    if user_id:
+        filters.append(("user_id", "eq", user_id))
+    result = db.query("mock_feedback", filters=filters)
+    if not result.data:
+        return None
+    return result.data[0]
 
 
 @router.get("/{interview_id}")
@@ -71,7 +80,7 @@ async def get_interview(interview_id: str):
     result = db.get_by_id("mock_interviews", interview_id)
     if not result.data:
         raise HTTPException(status_code=404, detail="Interview not found")
-    return result.data[0]
+    return enrich_mock_interview(result.data[0])
 
 
 @router.post("/{interview_id}/sessions")
@@ -79,7 +88,7 @@ async def start_session(interview_id: str, body: StartSessionRequest):
     try:
         return await svc.start_session(interview_id, body.user_id)
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -110,16 +119,4 @@ async def get_session(session_id: str):
     result = db.get_by_id("mock_sessions", session_id)
     if not result.data:
         raise HTTPException(status_code=404, detail="Session not found")
-    return result.data[0]
-
-
-@router.get("/feedback/{interview_id}")
-async def get_feedback(interview_id: str, user_id: str | None = None):
-    db = get_db()
-    filters = [("interview_id", "eq", interview_id)]
-    if user_id:
-        filters.append(("user_id", "eq", user_id))
-    result = db.query("mock_feedback", filters=filters)
-    if not result.data:
-        raise HTTPException(status_code=404, detail="Feedback not found")
     return result.data[0]

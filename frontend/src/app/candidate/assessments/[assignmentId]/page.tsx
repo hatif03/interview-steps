@@ -9,6 +9,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { CodeEditor } from "@/components/assessment/CodeEditor";
+import { EliminationBanner } from "@/components/candidate/EliminationBanner";
+import { LinkButton } from "@/components/link-button";
 import { gradeSqlAnswer } from "@/lib/sql-runner";
 import { toast } from "sonner";
 
@@ -17,6 +19,7 @@ export default function TakeAssessmentPage() {
   const router = useRouter();
   const assignmentId = params.assignmentId as string;
   const [assignment, setAssignment] = useState<AssessmentAssignment | null>(null);
+  const [blocked, setBlocked] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -26,14 +29,30 @@ export default function TakeAssessmentPage() {
   useEffect(() => {
     api.getAssessmentAssignment(assignmentId)
       .then(async (a) => {
+        if (a.status === "graded" || a.result?.outcome === "not_shortlisted") {
+          router.replace(`/candidate/assessments/${assignmentId}/results`);
+          return;
+        }
+        if (a.is_eliminated === false && a.can_take === false) {
+          setBlocked("This assessment is no longer available.");
+          setAssignment(a);
+          return;
+        }
+        if (a.is_eliminated) {
+          setBlocked("You were not advanced for this role. View your results and recommendations instead.");
+          setAssignment(a);
+          return;
+        }
         if (a.status === "assigned") {
-          const started = await api.startAssessmentAssignment(assignmentId);
-          setAssignment(started);
+          try {
+            const started = await api.startAssessmentAssignment(assignmentId);
+            setAssignment(started);
+          } catch (e) {
+            setBlocked(e instanceof Error ? e.message : "Cannot start assessment");
+            setAssignment(a);
+          }
         } else {
           setAssignment(a);
-        }
-        if (a.status === "graded") {
-          router.replace(`/candidate/assessments/${assignmentId}/results`);
         }
       })
       .catch(console.error)
@@ -41,6 +60,22 @@ export default function TakeAssessmentPage() {
   }, [assignmentId, router]);
 
   if (loading || !assignment) return <PageSkeleton rows={4} />;
+  if (blocked) {
+    return (
+      <div className="space-y-6 max-w-lg mx-auto">
+        <PageHeader title={assignment.job_title || "Technical Assessment"} description="This assessment is closed" />
+        <EliminationBanner message={blocked} candidateId={assignment.candidate_id} />
+        {assignment.status === "graded" && (
+          <LinkButton href={`/candidate/assessments/${assignmentId}/results`} className="w-full">
+            View results & feedback
+          </LinkButton>
+        )}
+        <LinkButton href={`/candidate/applications/${assignment.candidate_id}`} variant="outline" className="w-full">
+          View application timeline
+        </LinkButton>
+      </div>
+    );
+  }
   const questions = assignment.questions || [];
   const q = questions[currentIndex] as AssessmentQuestion | undefined;
   if (!q) return <p>No questions in this assessment.</p>;

@@ -34,15 +34,19 @@ export default function CandidateAssessmentsPage() {
         <div className="grid gap-4 sm:grid-cols-2">
           {assignments.map((a) => {
             const done = a.status === "graded";
-            const href = done
+            const rejected = a.is_eliminated || a.result?.outcome === "not_shortlisted";
+            const canTake = a.can_take !== false && !rejected && !done;
+            const href = done || rejected
               ? `/candidate/assessments/${a.id}/results`
               : `/candidate/assessments/${a.id}`;
             return (
-              <Card key={a.id} className="hover:border-primary/50 transition-colors">
+              <Card key={a.id} className={rejected ? "opacity-90 border-muted" : "hover:border-primary/50 transition-colors"}>
                 <CardHeader className="pb-2">
                   <div className="flex justify-between gap-2">
                     <CardTitle className="text-base">{a.job_title || a.assessment?.title || "Assessment"}</CardTitle>
-                    <Badge variant="outline" className="capitalize">{a.status.replace("_", " ")}</Badge>
+                    <Badge variant="outline" className="capitalize">
+                      {rejected ? "closed" : a.status.replace("_", " ")}
+                    </Badge>
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-3">
@@ -59,8 +63,11 @@ export default function CandidateAssessmentsPage() {
                       )}
                     </p>
                   )}
-                  <LinkButton href={href} size="sm" variant={done ? "outline" : "default"}>
-                    {done ? "View Results" : "Take Assessment"}
+                  {rejected && (
+                    <p className="text-xs text-muted-foreground">Not advanced — view your feedback and recommendations.</p>
+                  )}
+                  <LinkButton href={href} size="sm" variant={canTake ? "default" : "outline"}>
+                    {canTake ? "Take Assessment" : "View Results & Feedback"}
                   </LinkButton>
                 </CardContent>
               </Card>

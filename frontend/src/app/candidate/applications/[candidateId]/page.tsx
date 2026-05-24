@@ -7,6 +7,7 @@ import { PageSkeleton } from "@/components/loading";
 import { PageHeader } from "@/components/page-header";
 import { BackButton } from "@/components/back-button";
 import { AssessmentTimeline } from "@/components/assessment/AssessmentTimeline";
+import { EliminationBanner } from "@/components/candidate/EliminationBanner";
 import { Badge } from "@/components/ui/badge";
 import { STAGE_LABELS } from "@/lib/api";
 
@@ -33,12 +34,15 @@ export default function ApplicationDetailPage() {
         title={data.job_title}
         description="Your performance and feedback for each interview round"
         badge={
-          <Badge variant="outline">
-            {STAGE_LABELS[data.pipeline_stage] || data.pipeline_stage}
+          <Badge variant={data.is_eliminated ? "secondary" : "outline"}>
+            {data.is_eliminated ? "Application closed" : STAGE_LABELS[data.pipeline_stage] || data.pipeline_stage}
           </Badge>
         }
       />
-      {data.status_message && (
+      {data.is_eliminated && (
+        <EliminationBanner message={data.elimination_message} candidateId={candidateId} />
+      )}
+      {data.status_message && !data.is_eliminated && (
         <p className="text-sm text-muted-foreground bg-muted/50 rounded-lg p-3">{data.status_message}</p>
       )}
       <AssessmentTimeline rounds={data.rounds} />

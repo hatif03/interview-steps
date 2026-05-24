@@ -36,10 +36,20 @@ function normalizeApiError(status: number, detail: unknown, statusText: string) 
         : statusText || `HTTP ${status}`;
 
   if (
-    status === 500 &&
-    (message === "Internal Server Error" || statusText === "Internal Server Error")
+    status === 500 ||
+    status === 502 ||
+    status === 503 ||
+    status === 504
   ) {
-    return backendUnavailableMessage();
+    if (
+      message === "Internal Server Error" ||
+      statusText === "Internal Server Error" ||
+      statusText === "Bad Gateway" ||
+      statusText === "Service Unavailable" ||
+      statusText === "Gateway Timeout"
+    ) {
+      return backendUnavailableMessage();
+    }
   }
 
   return message;
@@ -352,8 +362,26 @@ export const api = {
       method: "POST",
       body: JSON.stringify(data),
     }),
-  shortlistAiInterview: (data: { job_id: string; interview_ids: string[]; outcomes: Record<string, string>; send_email?: boolean }) =>
+  shortlistAiInterview: (data: { job_id: string; outcomes: Record<string, string>; send_email?: boolean }) =>
     authRequest("/assessments/ai-interview/shortlist", { method: "POST", body: JSON.stringify(data) }),
+  getRoundSummary: (jobId: string) =>
+    authRequest<RoundSummary>(`/assessments/round-summary/${jobId}`),
+  remindRound: (data: { job_id: string; round_type: string; source_ids?: string[] }) =>
+    authRequest("/assessments/remind", { method: "POST", body: JSON.stringify(data) }),
+  closeRound: (data: { job_id: string; round_type: string }) =>
+    authRequest("/assessments/close-round", { method: "POST", body: JSON.stringify(data) }),
+  rerankJob: (jobId: string) =>
+    authRequest("/assessments/rerank", { method: "POST", body: JSON.stringify({ job_id: jobId }) }),
+  advanceToNextRound: (data: {
+    job_id: string;
+    round_type: string;
+    source_ids?: string[];
+    top_n?: number;
+    send_email?: boolean;
+    auto_assign?: boolean;
+  }) => authRequest("/assessments/advance", { method: "POST", body: JSON.stringify(data) }),
+  rejectFromRound: (data: { job_id: string; round_type: string; source_ids: string[] }) =>
+    authRequest("/assessments/reject", { method: "POST", body: JSON.stringify(data) }),
   sendInterviewEmails: (jobId: string, candidateIds: string[]) =>
     request(`/interviews/send-interview-emails?job_id=${encodeURIComponent(jobId)}&${candidateIds.map((id) => `candidate_ids=${encodeURIComponent(id)}`).join("&")}`, { method: "POST" }),
 
@@ -389,6 +417,14 @@ export const api = {
     ),
   getMockFeedback: (interviewId: string) =>
     request<MockFeedback>(`/mock-interviews/feedback/${interviewId}`),
+  getMockFeedbackOptional: async (interviewId: string) => {
+    try {
+      return await request<MockFeedback>(`/mock-interviews/feedback/${interviewId}`);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) return null;
+      throw err;
+    }
+  },
 };
 
 // Types
@@ -503,6 +539,8 @@ export interface Application {
   rank?: number;
   current_round?: string;
   latest_outcome?: string;
+  is_eliminated?: boolean;
+  elimination_message?: string | null;
 }
 
 export interface HiringRound {
@@ -528,6 +566,8 @@ export interface ApplicationRoundsResponse {
   job_title: string;
   pipeline_stage: string;
   status_message?: string;
+  is_eliminated?: boolean;
+  elimination_message?: string | null;
   rounds: HiringRound[];
 }
 
@@ -586,6 +626,8 @@ export interface AssessmentAssignment {
   result?: AssessmentResult;
   job_title?: string;
   candidate?: Candidate;
+  is_eliminated?: boolean;
+  can_take?: boolean;
 }
 
 export interface ScheduledInterview {
@@ -713,6 +755,29 @@ export interface AiInterviewResult {
   candidate?: Candidate;
 }
 
+export interface RoundStats {
+  total: number;
+  not_started: number;
+  in_progress: number;
+  graded?: number;
+  completed?: number;
+  awaiting_decision: number;
+  shortlisted: number;
+  not_shortlisted: number;
+}
+
+export interface RoundSummary {
+  job_id: string;
+  assessment: (JobAssessment & { round_status?: string }) | null;
+  ai_interview_round_status: string;
+  assessment_stats: RoundStats;
+  ai_stats: RoundStats;
+  assignments: AssessmentAssignment[];
+  ai_interviews: AiInterviewResult[];
+  assessment_shortlisted_ids: string[];
+  live_shortlisted_ids: string[];
+}
+
 export interface MockInterview {
   id: string;
   job_id: string;
@@ -725,6 +790,9 @@ export interface MockInterview {
   finalized: boolean;
   created_at: string;
   feedback?: MockFeedback | null;
+  outcome?: string | null;
+  is_eliminated?: boolean;
+  can_take?: boolean;
 }
 
 export interface MockFeedback {
@@ -754,6 +822,7 @@ export const STAGE_LABELS: Record<string, string> = {
   mock_interview_assigned: "Automated AI interview assigned",
   mock_interview_completed: "Automated AI interview done",
   interview_scheduled: "Live interview scheduled",
+  not_advanced: "Application closed",
   error: "Needs attention",
 };
 

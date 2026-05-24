@@ -29,6 +29,7 @@ const STAGE_PROGRESS: Record<string, number> = {
   mock_interview_assigned: 85,
   mock_interview_completed: 90,
   interview_scheduled: 100,
+  not_advanced: 100,
   error: 0,
 };
 
@@ -57,7 +58,7 @@ export default function CandidateDashboardPage() {
 
   if (loading) return <PageSkeleton rows={3} />;
 
-  const pendingInterviews = interviews.filter((i) => !i.feedback);
+  const pendingInterviews = interviews.filter((i) => !i.feedback && i.can_take !== false && !i.is_eliminated);
 
   return (
     <div className="space-y-8">
@@ -83,24 +84,35 @@ export default function CandidateDashboardPage() {
         >
           <div className="grid gap-4 sm:grid-cols-2">
             {applications.slice(0, 4).map((app) => (
-              <Card key={app.candidate_id} className="rounded-2xl shadow-sm">
+              <Card key={app.candidate_id} className={`rounded-2xl shadow-sm ${app.is_eliminated ? "border-muted" : ""}`}>
                 <CardHeader className="pb-2">
-                  <div className="flex justify-between items-start">
+                  <div className="flex justify-between items-start gap-2">
                     <CardTitle className="text-base">{app.job_title}</CardTitle>
-                    <Badge variant="outline" className="text-xs capitalize">{app.source}</Badge>
+                    <Badge variant={app.is_eliminated ? "secondary" : "outline"} className="text-xs capitalize shrink-0">
+                      {app.is_eliminated ? "Closed" : app.source}
+                    </Badge>
                   </div>
                   {app.company_name && <p className="text-xs text-muted-foreground">{app.company_name}</p>}
                 </CardHeader>
                 <CardContent className="space-y-3">
-                  <div>
-                    <div className="flex justify-between text-xs mb-1">
-                      <span>{STAGE_LABELS[app.pipeline_stage] || app.pipeline_stage}</span>
-                      <span>{STAGE_PROGRESS[app.pipeline_stage] || 0}%</span>
+                  {app.is_eliminated ? (
+                    <p className="text-xs text-muted-foreground">{app.elimination_message || "View your feedback and recommendations in the application timeline."}</p>
+                  ) : (
+                    <div>
+                      <div className="flex justify-between text-xs mb-1">
+                        <span>{STAGE_LABELS[app.pipeline_stage] || app.pipeline_stage}</span>
+                        <span>{STAGE_PROGRESS[app.pipeline_stage] || 0}%</span>
+                      </div>
+                      <Progress value={STAGE_PROGRESS[app.pipeline_stage] || 0} className="h-1.5" />
                     </div>
-                    <Progress value={STAGE_PROGRESS[app.pipeline_stage] || 0} className="h-1.5" />
-                  </div>
-                  {app.status_message && (
+                  )}
+                  {app.status_message && !app.is_eliminated && (
                     <p className="text-xs text-muted-foreground">{app.status_message}</p>
+                  )}
+                  {app.is_eliminated && (
+                    <Link href={`/candidate/applications/${app.candidate_id}`} className="text-xs text-primary hover:underline">
+                      View feedback →
+                    </Link>
                   )}
                 </CardContent>
               </Card>
@@ -115,7 +127,12 @@ export default function CandidateDashboardPage() {
         ) : (
           <div className="grid gap-4 sm:grid-cols-2">
             {interviews.map((iv) => (
-              <InterviewCard key={iv.id} interview={iv} />
+              <InterviewCard
+                key={iv.id}
+                interview={iv}
+                disabled={iv.can_take === false && !iv.feedback}
+                disabledReason={iv.is_eliminated ? "Application closed" : undefined}
+              />
             ))}
           </div>
         )}

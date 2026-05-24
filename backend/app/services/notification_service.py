@@ -122,14 +122,6 @@ async def notify_assessment_shortlisted(job_id: str, assignment_id: str) -> None
         _log_email(assignment["candidate_id"], job_id, "assessment_shortlisted", f"failed: {str(e)[:200]}")
 
 
-async def notify_ai_interview_assigned(
-    job_id: str,
-    candidate_ids: list[str],
-    interview_ids: dict[str, str],
-) -> None:
-    await send_mock_interview_invites(job_id, candidate_ids, interview_ids)
-
-
 async def notify_ai_interview_shortlisted(
     job_id: str,
     interview_id: str,
@@ -154,3 +146,98 @@ async def notify_ai_interview_shortlisted(
         _log_email(candidate_id, job_id, "ai_interview_shortlisted", "sent")
     except Exception as e:
         _log_email(candidate_id, job_id, "ai_interview_shortlisted", f"failed: {str(e)[:200]}")
+
+
+async def notify_ai_interview_assigned(
+    job_id: str,
+    candidate_ids: list[str],
+    interview_ids: dict[str, str],
+) -> None:
+    await send_mock_interview_invites(job_id, candidate_ids, interview_ids)
+
+
+REMINDER_ASSESSMENT_TEMPLATE = """
+<html>
+<body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+  <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; border-radius: 10px 10px 0 0;">
+    <h1 style="color: white; margin: 0;">Assessment Reminder</h1>
+  </div>
+  <div style="padding: 30px; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 0 0 10px 10px;">
+    <p>Dear <strong>{candidate_name}</strong>,</p>
+    <p>This is a reminder to complete your technical assessment for <strong>{job_title}</strong>.</p>
+    <div style="text-align: center; margin: 25px 0;">
+      <a href="{portal_link}" style="background: #667eea; color: white; padding: 12px 30px; border-radius: 6px; text-decoration: none; font-weight: bold;">Take Assessment</a>
+    </div>
+  </div>
+</body>
+</html>
+"""
+
+REMINDER_AI_INTERVIEW_TEMPLATE = """
+<html>
+<body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+  <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; border-radius: 10px 10px 0 0;">
+    <h1 style="color: white; margin: 0;">AI Interview Reminder</h1>
+  </div>
+  <div style="padding: 30px; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 0 0 10px 10px;">
+    <p>Dear <strong>{candidate_name}</strong>,</p>
+    <p>Please complete your Automated AI Interview for <strong>{job_title}</strong> when you have a quiet moment.</p>
+    <div style="text-align: center; margin: 25px 0;">
+      <a href="{portal_link}" style="background: #667eea; color: white; padding: 12px 30px; border-radius: 6px; text-decoration: none; font-weight: bold;">Open Portal</a>
+    </div>
+  </div>
+</body>
+</html>
+"""
+
+
+async def notify_assessment_reminder(job_id: str, assignment_ids: list[str]) -> None:
+    db = get_db()
+    job = db.get_by_id("jobs", job_id).data[0]
+    for aid in assignment_ids:
+        assignment = db.get_by_id("assessment_assignments", aid)
+        if not assignment.data:
+            continue
+        a = assignment.data[0]
+        candidate = db.get_by_id("candidates", a["candidate_id"]).data[0]
+        link = f"{_portal_base()}/assessments/{aid}"
+        html = REMINDER_ASSESSMENT_TEMPLATE.format(
+            candidate_name=candidate["name"],
+            job_title=job["title"],
+            portal_link=link,
+        )
+        try:
+            _send_email(
+                candidate["email"],
+                f"Reminder: Technical Assessment - {job['title']}",
+                html,
+            )
+            _log_email(a["candidate_id"], job_id, "assessment_reminder", "sent")
+        except Exception as e:
+            _log_email(a["candidate_id"], job_id, "assessment_reminder", f"failed: {str(e)[:200]}")
+
+
+async def notify_ai_interview_reminder(job_id: str, interview_ids: list[str]) -> None:
+    db = get_db()
+    job = db.get_by_id("jobs", job_id).data[0]
+    for iid in interview_ids:
+        interview = db.get_by_id("mock_interviews", iid)
+        if not interview.data:
+            continue
+        iv = interview.data[0]
+        candidate = db.get_by_id("candidates", iv["candidate_id"]).data[0]
+        link = f"{_portal_base()}/applications/{candidate['id']}"
+        html = REMINDER_AI_INTERVIEW_TEMPLATE.format(
+            candidate_name=candidate["name"],
+            job_title=job["title"],
+            portal_link=link,
+        )
+        try:
+            _send_email(
+                candidate["email"],
+                f"Reminder: AI Interview - {job['title']}",
+                html,
+            )
+            _log_email(iv["candidate_id"], job_id, "ai_interview_reminder", "sent")
+        except Exception as e:
+            _log_email(iv["candidate_id"], job_id, "ai_interview_reminder", f"failed: {str(e)[:200]}")

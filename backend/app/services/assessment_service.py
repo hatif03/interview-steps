@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 
 from app.core.llm import llm_json_completion
 from app.services import grading_service
-from app.services.hiring_rounds_service import complete_round, create_round
+from app.services.hiring_rounds_service import complete_round, create_round, is_candidate_eliminated, eliminate_candidate
 from app.services.scoring_engine import compute_rankings
 from app.supabase_repo import get_db
 
@@ -303,12 +303,33 @@ def get_assignments_for_user(user_id: str, email: str | None = None) -> list[dic
         for row in rows.data:
             enriched = get_assignment(row["id"])
             if enriched:
+                enriched["is_eliminated"] = is_candidate_eliminated(c["id"], c["job_id"])
+                enriched["can_take"] = (
+                    not enriched["is_eliminated"]
+                    and enriched.get("status") != "graded"
+                    and (enriched.get("result") or {}).get("outcome") != "not_shortlisted"
+                )
                 assignments.append(enriched)
     return assignments
 
 
+def _is_assessment_round_closed(job_id: str) -> bool:
+    assessment = get_assessment_for_job(job_id)
+    return bool(assessment and assessment.get("round_status") == "closed")
+
+
 def start_assignment(assignment_id: str) -> dict:
     db = get_db()
+    assignment = get_assignment(assignment_id)
+    if not assignment:
+        raise ValueError("Assignment not found")
+    if _is_assessment_round_closed(assignment["job_id"]):
+        raise ValueError("Assessment round is closed")
+    if is_candidate_eliminated(assignment["candidate_id"], assignment["job_id"]):
+        raise ValueError("You are not eligible for further assessments on this application")
+    result = assignment.get("result") or {}
+    if result.get("outcome") == "not_shortlisted":
+        raise ValueError("This assessment is closed — view your results and feedback")
     db.update(
         "assessment_assignments",
         assignment_id,
@@ -337,6 +358,10 @@ async def submit_and_grade(
         raise ValueError("Assignment not found")
     if assignment["status"] == "graded":
         raise ValueError("Already graded")
+    if _is_assessment_round_closed(assignment["job_id"]):
+        raise ValueError("Assessment round is closed")
+    if is_candidate_eliminated(assignment["candidate_id"], assignment["job_id"]):
+        raise ValueError("You are not eligible for further assessments on this application")
 
     questions = {q["id"]: q for q in assignment.get("questions", [])}
     section_totals: dict[str, list[float]] = {"mcq": [], "dsa": [], "sql": []}
@@ -502,9 +527,11 @@ async def set_shortlist_outcomes(
                 outcome="not_shortlisted",
                 email_sent=False,
             )
-            db.update("candidates", cid, {
-                "status_message": f"Assessment complete — not advanced. View feedback in your portal.",
-            })
+            eliminate_candidate(
+                cid,
+                job_id,
+                "Assessment complete — not advanced. View feedback and recommendations in your portal.",
+            )
 
         updated.append({"assignment_id": assignment_id, "outcome": outcome})
 

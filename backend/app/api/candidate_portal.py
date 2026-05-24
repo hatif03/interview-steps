@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from app.deps.auth import require_candidate
-from app.services.hiring_rounds_service import get_rounds_for_candidate
+from app.services.hiring_rounds_service import get_rounds_for_candidate, is_candidate_eliminated, elimination_message
 from app.services import assessment_service as assessment_svc
 from app.supabase_repo import get_db
 
@@ -59,6 +59,7 @@ async def list_my_applications(user: dict = Depends(require_candidate)):
 
         rounds = get_rounds_for_candidate(c["id"], c["job_id"])
         latest = rounds[-1] if rounds else None
+        eliminated = is_candidate_eliminated(c["id"], c["job_id"])
         applications.append({
             "candidate_id": c["id"],
             "job_id": c["job_id"],
@@ -72,6 +73,8 @@ async def list_my_applications(user: dict = Depends(require_candidate)):
             "rank": score.get("rank") if score else None,
             "current_round": latest.get("round_type") if latest else None,
             "latest_outcome": latest.get("outcome") if latest else None,
+            "is_eliminated": eliminated,
+            "elimination_message": elimination_message(c["id"], c["job_id"]) if eliminated else None,
         })
     return {"applications": applications, "total": len(applications)}
 
@@ -96,6 +99,8 @@ async def get_application_rounds(candidate_id: str, user: dict = Depends(require
         "job_title": job.get("title"),
         "pipeline_stage": c.get("pipeline_stage"),
         "status_message": c.get("status_message"),
+        "is_eliminated": is_candidate_eliminated(candidate_id, c["job_id"]),
+        "elimination_message": elimination_message(candidate_id, c["job_id"]),
         "rounds": enriched,
     }
 

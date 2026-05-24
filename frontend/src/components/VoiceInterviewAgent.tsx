@@ -27,6 +27,8 @@ interface VoiceInterviewAgentProps {
   userName: string;
   userId?: string;
   feedbackId?: string;
+  canTake?: boolean;
+  blockedMessage?: string;
 }
 
 function getSpeechRecognition(): typeof window.SpeechRecognition | null {
@@ -45,6 +47,8 @@ export function VoiceInterviewAgent({
   userName,
   userId,
   feedbackId,
+  canTake = true,
+  blockedMessage,
 }: VoiceInterviewAgentProps) {
   const router = useRouter();
   const [status, setStatus] = useState<CallStatus>(CallStatus.INACTIVE);
@@ -250,6 +254,7 @@ export function VoiceInterviewAgent({
   );
 
   const handleStart = async () => {
+    if (!canTake) return;
     if (!speechSupported || !mediaReady) return;
     setStatus(CallStatus.CONNECTING);
     setListenError(null);
@@ -263,6 +268,7 @@ export function VoiceInterviewAgent({
       runInterviewLoop(session.sessionId);
     } catch (err) {
       console.error(err);
+      setListenError(err instanceof Error ? err.message : "Could not start interview");
       setStatus(CallStatus.INACTIVE);
     }
   };
@@ -374,9 +380,12 @@ export function VoiceInterviewAgent({
         </div>
       )}
 
-      <div className="flex justify-center gap-3">
+      <div className="flex flex-col items-center gap-3">
+        {!canTake && blockedMessage && (
+          <p className="text-sm text-amber-700 text-center max-w-md">{blockedMessage}</p>
+        )}
         {!isActive && status !== CallStatus.FINISHED ? (
-          <Button size="lg" onClick={handleStart} disabled={!mediaReady || status === CallStatus.CONNECTING}>
+          <Button size="lg" onClick={handleStart} disabled={!canTake || !mediaReady || status === CallStatus.CONNECTING}>
             {status === CallStatus.CONNECTING ? (
               <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Connecting...</>
             ) : (

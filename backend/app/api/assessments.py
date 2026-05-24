@@ -10,8 +10,14 @@ from app.schemas.assessment import (
     SubmitAssessmentRequest,
     UpdateAssessmentRequest,
     AiInterviewShortlistRequest,
+    RemindRequest,
+    CloseRoundRequest,
+    RerankRequest,
+    AdvanceRequest,
+    RejectRequest,
 )
 from app.services import assessment_service as svc
+from app.services import round_control_service as round_svc
 from app.services.notification_service import notify_ai_interview_shortlisted
 from app.services.hiring_rounds_service import complete_round
 from app.supabase_repo import get_db
@@ -99,6 +105,13 @@ async def get_assignment(assignment_id: str):
     assignment = svc.get_assignment(assignment_id, include_answers=True)
     if not assignment:
         raise HTTPException(status_code=404, detail="Assignment not found")
+    from app.services.hiring_rounds_service import is_candidate_eliminated
+    assignment["is_eliminated"] = is_candidate_eliminated(assignment["candidate_id"], assignment["job_id"])
+    assignment["can_take"] = (
+        not assignment["is_eliminated"]
+        and assignment.get("status") != "graded"
+        and (assignment.get("result") or {}).get("outcome") != "not_shortlisted"
+    )
     safe_questions = []
     for q in assignment.get("questions", []):
         safe = {**q}
@@ -115,7 +128,10 @@ async def get_assignment(assignment_id: str):
 
 @router.post("/assignments/{assignment_id}/start")
 async def start_assignment(assignment_id: str):
-    return svc.start_assignment(assignment_id)
+    try:
+        return svc.start_assignment(assignment_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.post("/assignments/{assignment_id}/submit")
@@ -150,8 +166,6 @@ async def shortlist_ai_interview(body: AiInterviewShortlistRequest):
     db = get_db()
     updated = []
     for iid, outcome in body.outcomes.items():
-        if iid not in body.interview_ids:
-            continue
         interview = db.get_by_id("mock_interviews", iid)
         if not interview.data:
             continue
@@ -177,16 +191,65 @@ async def shortlist_ai_interview(body: AiInterviewShortlistRequest):
                 "status_message": f"AI interview score {score}/100 — shortlisted for live interview",
             })
         else:
-            complete_round(
-                iid,
-                round_type="ai_interview",
-                outcome="not_shortlisted",
-                total_score=score,
-                email_sent=False,
-            )
             db.update("candidates", iv["candidate_id"], {
                 "status_message": "AI interview complete — view feedback in your portal",
             })
         updated.append({"interview_id": iid, "outcome": outcome})
 
     return {"updated": updated}
+
+
+@router.get("/round-summary/{job_id}")
+async def get_round_summary(job_id: str):
+    return round_svc.get_round_summary(job_id)
+
+
+@router.post("/remind")
+async def remind_round(body: RemindRequest):
+    try:
+        return await round_svc.remind_round(body.job_id, body.round_type, body.source_ids)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/close-round")
+async def close_round(body: CloseRoundRequest):
+    try:
+        return await round_svc.close_round(body.job_id, body.round_type)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/rerank")
+async def rerank_job(body: RerankRequest):
+    try:
+        return await round_svc.rerank_job(body.job_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/advance")
+async def advance_round(body: AdvanceRequest):
+    try:
+        return await round_svc.advance_round(
+            body.job_id,
+            body.round_type,
+            body.source_ids,
+            body.top_n,
+            body.send_email,
+            body.auto_assign,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/reject")
+async def reject_round(body: RejectRequest):
+    try:
+        if body.round_type == "platform_test":
+            return await round_svc.reject_assessment_round(body.job_id, body.source_ids)
+        if body.round_type == "ai_interview":
+            return await round_svc.reject_ai_round(body.job_id, body.source_ids)
+        raise ValueError(f"Unknown round_type: {body.round_type}")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))

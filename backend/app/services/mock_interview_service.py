@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from app.core.llm import llm_completion, llm_json_completion
 from app.supabase_repo import get_db
 from app.services.email_service import send_mock_interview_invites
-from app.services.hiring_rounds_service import complete_round, create_round
+from app.services.hiring_rounds_service import complete_round, create_round, is_candidate_eliminated, eliminate_candidate
 
 INTERVIEWER_SYSTEM = """You are a professional technical interviewer conducting an automated AI voice interview.
 Ask one question at a time. Keep responses concise (2-4 sentences) since they will be read aloud.
@@ -142,6 +142,22 @@ async def start_session(mock_interview_id: str, user_id: str | None = None) -> d
         raise ValueError("Mock interview not found")
 
     mi = interview.data[0]
+    job = db.get_by_id("jobs", mi["job_id"])
+    if job.data and job.data[0].get("ai_interview_round_status") == "closed":
+        raise ValueError("AI interview round is closed")
+    if is_candidate_eliminated(mi["candidate_id"], mi["job_id"]):
+        raise ValueError("You are not eligible for further interviews on this application")
+
+    rounds = db.query(
+        "hiring_rounds",
+        filters=[
+            ("reference_id", "eq", mock_interview_id),
+            ("round_type", "eq", "ai_interview"),
+        ],
+    )
+    if rounds.data and rounds.data[0].get("outcome") == "not_shortlisted":
+        raise ValueError("This interview is closed — view your feedback and recommendations")
+
     questions = mi.get("questions", [])
     opening = f"Hello! Welcome to your automated AI interview for the {mi.get('role', 'position')} role. Let's begin."
 
@@ -184,6 +200,14 @@ async def process_turn(session_id: str, user_message: str) -> dict:
         raise ValueError("Session not found")
 
     session = session_result.data[0]
+    mock_interview_id = session.get("mock_interview_id")
+    if mock_interview_id:
+        interview = db.get_by_id("mock_interviews", mock_interview_id)
+        if interview.data:
+            mi = interview.data[0]
+            if is_candidate_eliminated(mi["candidate_id"], mi["job_id"]):
+                raise ValueError("You are not eligible for further interviews on this application")
+
     if session.get("status") == "completed":
         return {
             "assistantMessage": "This interview session is already complete.",

@@ -66,6 +66,9 @@ export function computeWorkflowSteps(
   actionLoading: string | null,
   assessmentAssignedCount = 0,
   assessmentGradedCount = 0,
+  aiInterviewCount = 0,
+  aiAwaitingReview = 0,
+  liveShortlistedCount = 0,
 ): Record<WorkflowStepId, WorkflowStepState> {
   const total = candidates.length;
   const stages = pipeline?.stages ?? {};
@@ -78,11 +81,6 @@ export function computeWorkflowSteps(
   const evaluatingCount = candidates.filter((c) => c.pipeline_stage === "evaluating").length;
   const evaluatedCount = countAtOrPast(candidates, "evaluated");
   const rankedCount = candidates.filter((c) => c.scores?.rank != null).length;
-  const aiCount =
-    (stages.ai_interview_assigned ?? 0) +
-    (stages.ai_interview_completed ?? 0) +
-    (stages.mock_interview_assigned ?? 0) +
-    (stages.mock_interview_completed ?? 0);
   const testSentCount = (stages.test_sent ?? 0) + (stages.test_completed ?? 0);
   const testDoneCount = stages.test_completed ?? 0;
   const interviewCount = stages.interview_scheduled ?? 0;
@@ -181,15 +179,20 @@ export function computeWorkflowSteps(
         : { status: "pending", summary: "Rank candidates first", allowRun: false };
 
   const aiInterview: WorkflowStepState =
-    aiCount > 0
+    aiInterviewCount > 0
       ? {
-          status: "completed",
-          summary: `${aiCount} AI interview${aiCount !== 1 ? "s" : ""} assigned`,
+          status: aiAwaitingReview > 0 ? "partial" : "completed",
+          summary:
+            aiAwaitingReview > 0
+              ? `${aiAwaitingReview} awaiting review · ${aiInterviewCount} in AI pool`
+              : `${aiInterviewCount} AI interview${aiInterviewCount !== 1 ? "s" : ""} assigned`,
           allowRun: true,
         }
-      : rankedCount > 0
-        ? { status: "pending", summary: "Shortlist from assessment first", allowRun: true }
-        : { status: "pending", summary: "Rank candidates first", allowRun: false };
+      : assessmentGradedCount > 0
+        ? { status: "pending", summary: "Advance from assessment hub", allowRun: true }
+        : rankedCount > 0
+          ? { status: "pending", summary: "Assign assessment first", allowRun: true }
+          : { status: "pending", summary: "Rank candidates first", allowRun: false };
 
   const testEmails: WorkflowStepState =
     testSentCount > 0
@@ -216,9 +219,17 @@ export function computeWorkflowSteps(
           summary: `${interviewCount} interview${interviewCount !== 1 ? "s" : ""} scheduled`,
           allowRun: true,
         }
-      : rankedCount > 0
-        ? { status: "pending", summary: "Shortlist from AI interview", allowRun: true }
-        : { status: "pending", summary: "Rank candidates first", allowRun: false };
+      : liveShortlistedCount > 0
+        ? {
+            status: "pending",
+            summary: `${liveShortlistedCount} in live pool — schedule interviews`,
+            allowRun: true,
+          }
+        : aiInterviewCount > 0
+          ? { status: "pending", summary: "Advance from AI interview hub", allowRun: true }
+          : rankedCount > 0
+            ? { status: "pending", summary: "Complete earlier rounds first", allowRun: false }
+            : { status: "pending", summary: "Rank candidates first", allowRun: false };
 
   return {
     upload,

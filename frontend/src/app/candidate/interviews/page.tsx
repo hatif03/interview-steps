@@ -23,10 +23,15 @@ export default function InterviewsPage() {
   useEffect(() => {
     if (!user) return;
     Promise.all([
-      api.getUserMockInterviews(user.id, user.email || undefined).then((r) => setAiInterviews(r.interviews)),
-      api.getMyAssessments().then((r) => setAssessments(r.assignments)),
-      api.getMyInterviews().then((r) => setScheduled(r.interviews)),
+      api.getUserMockInterviews(user.id, user.email || undefined),
+      api.getMyAssessments(),
+      api.getMyInterviews(),
     ])
+      .then(([ai, assess, live]) => {
+        setAiInterviews(ai.interviews);
+        setAssessments(assess.assignments);
+        setScheduled(live.interviews);
+      })
       .catch(console.error)
       .finally(() => setLoading(false));
   }, [user]);
@@ -51,9 +56,11 @@ export default function InterviewsPage() {
             <div className="grid gap-4 sm:grid-cols-2">
               {assessments.map((a) => {
                 const done = a.status === "graded";
-                const href = done ? `/candidate/assessments/${a.id}/results` : `/candidate/assessments/${a.id}`;
+                const rejected = a.is_eliminated || a.result?.outcome === "not_shortlisted";
+                const canTake = !rejected && !done && a.can_take !== false;
+                const href = done || rejected ? `/candidate/assessments/${a.id}/results` : `/candidate/assessments/${a.id}`;
                 return (
-                  <Card key={a.id} className="hover:border-primary/50 transition-colors">
+                  <Card key={a.id} className={rejected ? "border-muted" : "hover:border-primary/50 transition-colors"}>
                     <CardHeader className="pb-2">
                       <CardTitle className="text-base">{a.job_title || "Assessment"}</CardTitle>
                     </CardHeader>
@@ -63,8 +70,8 @@ export default function InterviewsPage() {
                           <Trophy className="h-3.5 w-3.5" />{Math.round(a.result.total_score)}/100
                         </p>
                       )}
-                      <LinkButton href={href} size="sm" variant={done ? "outline" : "default"}>
-                        {done ? "View Results" : "Take Assessment"}
+                      <LinkButton href={href} size="sm" variant={canTake ? "default" : "outline"}>
+                        {canTake ? "Take Assessment" : "View Results & Feedback"}
                       </LinkButton>
                     </CardContent>
                   </Card>
@@ -80,7 +87,16 @@ export default function InterviewsPage() {
           ) : (
             <StaggerList className="grid gap-4 sm:grid-cols-2">
               {aiInterviews.map((iv) => (
-                <InterviewCard key={iv.id} interview={iv} />
+                <InterviewCard
+                  key={iv.id}
+                  interview={iv}
+                  disabled={iv.can_take === false && !iv.feedback}
+                  disabledReason={
+                    iv.is_eliminated || iv.can_take === false
+                      ? "Application closed — view feedback only"
+                      : undefined
+                  }
+                />
               ))}
             </StaggerList>
           )}
