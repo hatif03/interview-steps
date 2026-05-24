@@ -135,6 +135,16 @@ async def get_shortlisted(job_id: str):
     return {"candidate_ids": svc.get_shortlisted_for_ai_interview(job_id)}
 
 
+@router.get("/live-shortlisted/{job_id}")
+async def get_live_shortlisted(job_id: str):
+    return {"candidate_ids": svc.get_shortlisted_for_live_interview(job_id)}
+
+
+@router.get("/ai-interview-results/{job_id}")
+async def get_ai_interview_results(job_id: str):
+    return {"results": svc.get_job_ai_interview_results(job_id)}
+
+
 @router.post("/ai-interview/shortlist")
 async def shortlist_ai_interview(body: AiInterviewShortlistRequest):
     db = get_db()
@@ -163,10 +173,17 @@ async def shortlist_ai_interview(body: AiInterviewShortlistRequest):
                     body.job_id, iid, iv["candidate_id"], int(score)
                 )
             db.update("candidates", iv["candidate_id"], {
-                "pipeline_stage": "shortlisted",
+                "pipeline_stage": "ai_interview_completed",
                 "status_message": f"AI interview score {score}/100 — shortlisted for live interview",
             })
         else:
+            complete_round(
+                iid,
+                round_type="ai_interview",
+                outcome="not_shortlisted",
+                total_score=score,
+                email_sent=False,
+            )
             db.update("candidates", iv["candidate_id"], {
                 "status_message": "AI interview complete — view feedback in your portal",
             })

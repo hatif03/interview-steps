@@ -339,6 +339,10 @@ export const api = {
     authRequest("/assessments/shortlist", { method: "POST", body: JSON.stringify(data) }),
   getAssessmentShortlisted: (jobId: string) =>
     authRequest<{ candidate_ids: string[] }>(`/assessments/shortlisted/${jobId}`),
+  getLiveShortlisted: (jobId: string) =>
+    authRequest<{ candidate_ids: string[] }>(`/assessments/live-shortlisted/${jobId}`),
+  getAiInterviewResults: (jobId: string) =>
+    authRequest<{ results: AiInterviewResult[] }>(`/assessments/ai-interview-results/${jobId}`),
   getAssessmentAssignment: (assignmentId: string) =>
     authRequest<AssessmentAssignment>(`/assessments/assignments/${assignmentId}`),
   startAssessmentAssignment: (assignmentId: string) =>
@@ -693,6 +697,20 @@ export interface AppUser {
   email: string;
   name: string;
   role: "recruiter" | "candidate";
+}
+
+export interface AiInterviewResult {
+  id: string;
+  job_id: string;
+  candidate_id: string;
+  role: string;
+  type: string;
+  level: string;
+  attempt_number?: number;
+  created_at: string;
+  feedback?: MockFeedback | null;
+  outcome?: string | null;
+  candidate?: Candidate;
 }
 
 export interface MockInterview {

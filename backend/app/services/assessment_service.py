@@ -545,3 +545,51 @@ def get_shortlisted_for_ai_interview(job_id: str) -> list[str]:
         if res.data:
             shortlisted.append(a["candidate_id"])
     return list(set(shortlisted))
+
+
+def get_job_ai_interview_results(job_id: str) -> list[dict]:
+    """Mock interviews for a job with feedback and review outcome."""
+    db = get_db()
+    interviews = db.query(
+        "mock_interviews",
+        filters=[("job_id", "eq", job_id)],
+        order_by="created_at",
+        order_desc=True,
+    )
+    results = []
+    for iv in interviews.data:
+        fb = db.query("mock_feedback", filters=[("interview_id", "eq", iv["id"])])
+        rounds = db.query(
+            "hiring_rounds",
+            filters=[
+                ("reference_id", "eq", iv["id"]),
+                ("round_type", "eq", "ai_interview"),
+            ],
+            order_by="created_at",
+            order_desc=True,
+        )
+        cand = db.get_by_id("candidates", iv["candidate_id"])
+        feedback = fb.data[0] if fb.data else None
+        round_row = rounds.data[0] if rounds.data else None
+        outcome = round_row.get("outcome", "pending") if round_row and feedback else None
+        results.append({
+            **iv,
+            "feedback": feedback,
+            "outcome": outcome,
+            "candidate": cand.data[0] if cand.data else None,
+        })
+    return results
+
+
+def get_shortlisted_for_live_interview(job_id: str) -> list[str]:
+    """Candidate IDs shortlisted from AI interview for live scheduling."""
+    db = get_db()
+    rounds = db.query(
+        "hiring_rounds",
+        filters=[
+            ("job_id", "eq", job_id),
+            ("round_type", "eq", "ai_interview"),
+            ("outcome", "eq", "shortlisted"),
+        ],
+    )
+    return list({r["candidate_id"] for r in rounds.data})

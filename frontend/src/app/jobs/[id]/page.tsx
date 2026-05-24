@@ -3,7 +3,7 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { api, Job, Candidate, PipelineSummary } from "@/lib/api";
+import { api, Job, Candidate, PipelineSummary, type AssessmentAssignment } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -37,10 +37,13 @@ import { BackButton } from "@/components/back-button";
 import { PageHeader } from "@/components/page-header";
 import { PageSkeleton } from "@/components/loading";
 import { CopyLinkButton } from "@/components/copy-link-button";
+import { LinkButton } from "@/components/link-button";
 import { FileDropzone, downloadCsvTemplate } from "@/components/file-dropzone";
 import { WorkflowStepCard } from "@/components/workflow-step-card";
 import { WorkflowRunButton, WorkflowFileUpload } from "@/components/workflow-run-button";
 import { computeWorkflowSteps } from "@/lib/workflow-status";
+import { RoundReviewPanel } from "@/components/assessment/RoundReviewPanel";
+import type { AiInterviewResult } from "@/lib/api";
 import {
   Upload,
   Brain,
@@ -228,8 +231,11 @@ export default function JobDetailPage() {
   const [assessmentSelectedIds, setAssessmentSelectedIds] = useState<Set<string>>(new Set());
   const [assessmentPickerOpen, setAssessmentPickerOpen] = useState(false);
   const [assessmentSendEmail, setAssessmentSendEmail] = useState(true);
-  const [assessmentResults, setAssessmentResults] = useState<Array<{ id: string; candidate?: { name?: string }; result?: { outcome?: string; total_score?: number } }>>([]);
+  const [assessmentResults, setAssessmentResults] = useState<AssessmentAssignment[]>([]);
+  const [aiInterviewResults, setAiInterviewResults] = useState<AiInterviewResult[]>([]);
   const [shortlistedIds, setShortlistedIds] = useState<string[]>([]);
+  const [liveShortlistedIds, setLiveShortlistedIds] = useState<string[]>([]);
+  const [reviewLoading, setReviewLoading] = useState(false);
   const [sendInterviewEmail, setSendInterviewEmail] = useState(true);
 
   const toggleTestCandidate = (id: string) => {
@@ -268,15 +274,19 @@ export default function JobDetailPage() {
 
   const refresh = useCallback(async () => {
     try {
-      const [j, c, p, ar, sl] = await Promise.all([
+      const [j, c, p, ar, sl, air, liveSl] = await Promise.all([
         api.getJob(jobId),
         api.listCandidates({ job_id: jobId, limit: 200 }),
         api.getPipelineSummary(jobId),
         api.getAssessmentResults(jobId).catch(() => ({ results: [] })),
         api.getAssessmentShortlisted(jobId).catch(() => ({ candidate_ids: [] })),
+        api.getAiInterviewResults(jobId).catch(() => ({ results: [] })),
+        api.getLiveShortlisted(jobId).catch(() => ({ candidate_ids: [] })),
       ]);
       setAssessmentResults(ar.results || []);
+      setAiInterviewResults(air.results || []);
       setShortlistedIds(sl.candidate_ids || []);
+      setLiveShortlistedIds(liveSl.candidate_ids || []);
       setJob(j);
       setPipeline(p);
 
@@ -411,15 +421,122 @@ export default function JobDetailPage() {
     ? rankedCandidates.filter((c) => shortlistedIds.includes(c.id))
     : rankedCandidates;
 
+  const liveInterviewCandidates = liveShortlistedIds.length > 0
+    ? rankedCandidates.filter((c) => liveShortlistedIds.includes(c.id))
+    : aiInterviewCandidates.length > 0
+      ? aiInterviewCandidates
+      : rankedCandidates;
+
   const assessmentAssignedCount = assessmentResults.length;
   const assessmentGradedCount = assessmentResults.filter((r) => r.status === "graded" || r.result).length;
+
+  const handleShortlistAssessment = async (assignmentId: string) => {
+    setReviewLoading(true);
+    try {
+      await api.shortlistAssessment({ job_id: jobId, outcomes: { [assignmentId]: "shortlisted" }, send_email: true });
+      toast.success("Candidate advanced to AI interview round");
+      refresh();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed");
+    } finally {
+      setReviewLoading(false);
+    }
+  };
+
+  const handleRejectAssessment = async (assignmentId: string) => {
+    setReviewLoading(true);
+    try {
+      await api.shortlistAssessment({ job_id: jobId, outcomes: { [assignmentId]: "not_shortlisted" }, send_email: false });
+      toast.success("Candidate marked as not advanced");
+      refresh();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed");
+    } finally {
+      setReviewLoading(false);
+    }
+  };
+
+  const handleBulkShortlistAssessments = async (topN: number) => {
+    const pending = assessmentResults
+      .filter((r) => r.result?.outcome === "pending")
+      .sort((a, b) => (b.result?.total_score || 0) - (a.result?.total_score || 0))
+      .slice(0, topN);
+    if (pending.length === 0) return;
+    setReviewLoading(true);
+    try {
+      const outcomes = Object.fromEntries(pending.map((r) => [r.id, "shortlisted"]));
+      await api.shortlistAssessment({ job_id: jobId, outcomes, send_email: true });
+      toast.success(`Shortlisted top ${pending.length} by assessment score`);
+      refresh();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed");
+    } finally {
+      setReviewLoading(false);
+    }
+  };
+
+  const handleShortlistAi = async (interviewId: string) => {
+    setReviewLoading(true);
+    try {
+      await api.shortlistAiInterview({
+        job_id: jobId,
+        interview_ids: [interviewId],
+        outcomes: { [interviewId]: "shortlisted" },
+        send_email: true,
+      });
+      toast.success("Candidate advanced to live interview pool");
+      refresh();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed");
+    } finally {
+      setReviewLoading(false);
+    }
+  };
+
+  const handleRejectAi = async (interviewId: string) => {
+    setReviewLoading(true);
+    try {
+      await api.shortlistAiInterview({
+        job_id: jobId,
+        interview_ids: [interviewId],
+        outcomes: { [interviewId]: "not_shortlisted" },
+        send_email: false,
+      });
+      toast.success("Candidate marked as not advanced");
+      refresh();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed");
+    } finally {
+      setReviewLoading(false);
+    }
+  };
+
+  const handleBulkShortlistAi = async (topN: number) => {
+    const pending = aiInterviewResults
+      .filter((r) => r.feedback && r.outcome === "pending")
+      .sort((a, b) => (b.feedback?.total_score || 0) - (a.feedback?.total_score || 0))
+      .slice(0, topN);
+    if (pending.length === 0) return;
+    setReviewLoading(true);
+    try {
+      const ids = pending.map((r) => r.id);
+      const outcomes = Object.fromEntries(ids.map((id) => [id, "shortlisted"]));
+      await api.shortlistAiInterview({ job_id: jobId, interview_ids: ids, outcomes, send_email: true });
+      toast.success(`Shortlisted top ${pending.length} by AI interview score`);
+      refresh();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed");
+    } finally {
+      setReviewLoading(false);
+    }
+  };
 
   const applyTestTopN = () => {
     setTestSelectedIds(new Set(rankedCandidates.slice(0, testTopN).map((c) => c.id)));
   };
 
   const applyInterviewTopN = () => {
-    setInterviewSelectedIds(new Set(rankedCandidates.slice(0, interviewTopN).map((c) => c.id)));
+    setInterviewSelectedIds(new Set(liveInterviewCandidates.slice(0, interviewTopN).map((c) => c.id)));
   };
 
   const processingCount = candidates.filter(
@@ -739,9 +856,9 @@ export default function JobDetailPage() {
               description="Create on-platform test (MCQ, DSA, SQL) and assign to ranked candidates."
               step={workflowSteps.platform_assessment}
             >
-              <Button variant="outline" size="sm" className="w-full" asChild>
-                <Link href={`/jobs/${jobId}/assessment`}>Create / Edit Assessment</Link>
-              </Button>
+              <LinkButton href={`/jobs/${jobId}/assessment`} variant="outline" size="sm" className="w-full">
+                Create / Edit Assessment
+              </LinkButton>
               <CandidatePicker
                 candidates={rankedCandidates}
                 selectedIds={assessmentSelectedIds}
@@ -774,29 +891,19 @@ export default function JobDetailPage() {
                   )
                 }
               />
-              {assessmentResults.filter((r) => r.result && r.result.outcome === "pending").length > 0 && (
-                <div className="mt-3 space-y-2 border-t pt-3">
-                  <p className="text-xs font-medium">Review & shortlist graded assessments</p>
-                  {assessmentResults.filter((r) => r.result?.outcome === "pending").map((r) => (
-                    <div key={r.id} className="flex items-center justify-between text-xs gap-2">
-                      <span>{r.candidate?.name} — {Math.round(r.result?.total_score || 0)}/100</span>
-                      <div className="flex gap-1">
-                        <Button size="sm" variant="outline" className="h-7 text-[10px]" onClick={async () => {
-                          await api.shortlistAssessment({ job_id: jobId, outcomes: { [r.id]: "shortlisted" }, send_email: true });
-                          toast.success("Shortlisted");
-                          refresh();
-                        }}>Shortlist</Button>
-                        <Button size="sm" variant="ghost" className="h-7 text-[10px]" onClick={async () => {
-                          await api.shortlistAssessment({ job_id: jobId, outcomes: { [r.id]: "not_shortlisted" }, send_email: false });
-                          toast.success("Marked not shortlisted");
-                          refresh();
-                        }}>Reject</Button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
             </WorkflowStepCard>
+
+            <RoundReviewPanel
+              assessmentResults={assessmentResults}
+              aiInterviewResults={aiInterviewResults}
+              loading={reviewLoading}
+              onShortlistAssessment={handleShortlistAssessment}
+              onRejectAssessment={handleRejectAssessment}
+              onShortlistAi={handleShortlistAi}
+              onRejectAi={handleRejectAi}
+              onBulkShortlistAssessments={handleBulkShortlistAssessments}
+              onBulkShortlistAi={handleBulkShortlistAi}
+            />
 
             <WorkflowStepCard
               title={<><Brain className="h-4 w-4" /> 6. Assign Automated AI Interview</>}
@@ -922,7 +1029,7 @@ export default function JobDetailPage() {
                 <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
               </div>
               <CandidatePicker
-                candidates={aiInterviewCandidates.length > 0 ? aiInterviewCandidates : rankedCandidates}
+                candidates={liveInterviewCandidates}
                 selectedIds={interviewSelectedIds}
                 onToggle={toggleInterviewCandidate}
                 topN={interviewTopN}
@@ -970,8 +1077,21 @@ export default function JobDetailPage() {
         {/* Rankings Tab */}
         <TabsContent value="rankings">
           <Card>
-            <CardHeader>
-              <CardTitle>Candidate Rankings</CardTitle>
+            <CardHeader className="flex flex-row items-center justify-between gap-4">
+              <div>
+                <CardTitle>Candidate Rankings</CardTitle>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Composite scores include platform assessment results. Recompute after assessments are graded, then use Round Review to advance candidates.
+                </p>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={actionLoading === "rank"}
+                onClick={() => runAction("Ranking", () => api.rankCandidates(jobId), "rank")}
+              >
+                {actionLoading === "rank" ? "Recomputing..." : "Recompute Rankings"}
+              </Button>
             </CardHeader>
             <CardContent className="p-0">
               <TooltipProvider>
@@ -980,6 +1100,9 @@ export default function JobDetailPage() {
                   <TableRow>
                     <TableHead className="w-16">Rank</TableHead>
                     <TableHead>Name</TableHead>
+                    <TableHead>Assessment</TableHead>
+                    <TableHead>AI Interview</TableHead>
+                    <TableHead>Round Status</TableHead>
                     <TableHead>JD Match</TableHead>
                     <TableHead>GitHub</TableHead>
                     <TableHead>Code Test</TableHead>
@@ -992,8 +1115,21 @@ export default function JobDetailPage() {
                 <TableBody>
                   {rankedCandidates.map((c) => {
                     const bd = c.scores?.score_breakdown;
+                    const assess = assessmentResults
+                      .filter((r) => r.candidate_id === c.id && r.result)
+                      .sort((a, b) => (b.result?.total_score || 0) - (a.result?.total_score || 0))[0];
+                    const aiIv = aiInterviewResults
+                      .filter((r) => r.candidate_id === c.id && r.feedback)
+                      .sort((a, b) => (b.feedback?.total_score || 0) - (a.feedback?.total_score || 0))[0];
+                    const roundLabel = liveShortlistedIds.includes(c.id)
+                      ? "Live pool"
+                      : shortlistedIds.includes(c.id)
+                        ? "AI pool"
+                        : assess?.result?.outcome === "not_shortlisted" || aiIv?.outcome === "not_shortlisted"
+                          ? "Not advanced"
+                          : "—";
                     return (
-                      <TableRow key={c.id} className={c.scores?.rank === 1 ? "bg-amber-50" : ""}>
+                      <TableRow key={c.id} className={c.scores?.rank === 1 ? "bg-amber-50" : liveShortlistedIds.includes(c.id) ? "bg-green-50/50" : ""}>
                         <TableCell>
                           <span className="font-bold text-lg">
                             {c.scores?.rank != null ? `#${c.scores.rank}` : "—"}
@@ -1001,6 +1137,15 @@ export default function JobDetailPage() {
                         </TableCell>
                         <TableCell>
                           <Link href={`/candidates/${c.id}`} className="font-medium hover:underline">{c.name}</Link>
+                        </TableCell>
+                        <TableCell className="font-mono text-sm">
+                          {assess?.result ? `${Math.round(assess.result.total_score)}/100` : "—"}
+                        </TableCell>
+                        <TableCell className="font-mono text-sm">
+                          {aiIv?.feedback ? `${aiIv.feedback.total_score}/100` : "—"}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className="text-[10px]">{roundLabel}</Badge>
                         </TableCell>
                         <ScoreCell entry={bd?.jd_match} label="JD Match" />
                         <ScoreCell entry={bd?.github} label="GitHub" />

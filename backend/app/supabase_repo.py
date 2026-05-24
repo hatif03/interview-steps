@@ -39,7 +39,7 @@ class QueryResult:
 
 
 # Tables that use other timestamp columns (e.g. sent_at) instead of created_at
-_TABLES_WITHOUT_CREATED_AT = frozenset({"email_logs"})
+_TABLES_WITHOUT_CREATED_AT = frozenset({"email_logs", "assessment_assignments"})
 
 
 class SupabaseRepo:
