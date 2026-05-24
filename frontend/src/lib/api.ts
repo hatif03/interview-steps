@@ -22,6 +22,9 @@ export class ApiError extends Error {
 }
 
 const REQUEST_TIMEOUT_MS = 30_000;
+const POLL_TIMEOUT_MS = 60_000;
+
+type RequestOptions = RequestInit & { timeoutMs?: number };
 
 function backendUnavailableMessage() {
   return "Backend unavailable. Start the API server with: cd backend && uvicorn app.main:app --reload --port 8000";
@@ -57,23 +60,27 @@ function normalizeApiError(status: number, detail: unknown, statusText: string) 
 
 async function request<T>(
   path: string,
-  options?: RequestInit,
+  options?: RequestOptions,
   retries = 0
 ): Promise<T> {
-  const method = (options?.method ?? "GET").toUpperCase();
+  const { timeoutMs, ...fetchOptions } = options ?? {};
+  const method = (fetchOptions.method ?? "GET").toUpperCase();
   const maxRetries = method === "GET" ? 0 : retries;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    const timeoutId = setTimeout(
+      () => controller.abort(),
+      timeoutMs ?? REQUEST_TIMEOUT_MS
+    );
 
     try {
       const res = await fetch(`${API_BASE}${path}`, {
-        ...options,
+        ...fetchOptions,
         signal: controller.signal,
         headers: {
           "Content-Type": "application/json",
-          ...options?.headers,
+          ...fetchOptions.headers,
         },
       });
       if (!res.ok) {
@@ -103,7 +110,7 @@ async function request<T>(
   throw new Error("Request failed");
 }
 
-async function authRequest<T>(path: string, options?: RequestInit, retries = 0): Promise<T> {
+async function authRequest<T>(path: string, options?: RequestOptions, retries = 0): Promise<T> {
   const token = await getToken();
   return request<T>(
     path,
@@ -150,6 +157,15 @@ export const DEFAULT_APPLY_FORM_CONFIG = {
   },
 };
 
+export interface TaskResponse {
+  task_id: string;
+  status: string;
+  backend?: "rq" | "thread";
+  message?: string;
+  result?: unknown;
+  error?: string | null;
+}
+
 export const api = {
   // Jobs
   createJob: (data: JobCreatePayload) =>
@@ -174,13 +190,26 @@ export const api = {
     if (!res.ok) throw new Error("Upload failed");
     return res.json();
   },
-  listCandidates: (params?: { job_id?: string; stage?: string; limit?: number; offset?: number }) => {
+  listCandidates: (params?: {
+    job_id?: string;
+    stage?: string;
+    limit?: number;
+    offset?: number;
+    summary?: boolean;
+    include_scores?: boolean;
+    timeoutMs?: number;
+  }) => {
     const query = new URLSearchParams();
     if (params?.job_id) query.set("job_id", params.job_id);
     if (params?.stage) query.set("stage", params.stage);
     if (params?.limit) query.set("limit", String(params.limit));
     if (params?.offset) query.set("offset", String(params.offset));
-    return request<{ candidates: Candidate[]; total: number }>(`/candidates?${query}`);
+    if (params?.summary) query.set("summary", "true");
+    if (params?.include_scores === false) query.set("include_scores", "false");
+    return request<{ candidates: Candidate[]; total: number }>(
+      `/candidates?${query}`,
+      { timeoutMs: params?.timeoutMs ?? (params?.summary ? POLL_TIMEOUT_MS : REQUEST_TIMEOUT_MS) }
+    );
   },
   getCandidate: (id: string) => request<Candidate>(`/candidates/${id}`),
   deleteCandidate: (id: string) => request(`/candidates/${id}`, { method: "DELETE" }),
@@ -188,18 +217,19 @@ export const api = {
   retryEvaluation: (id: string) => request(`/candidates/${id}/retry-evaluation`, { method: "POST" }),
   getPipelineSummary: (jobId: string) => request<PipelineSummary>(`/candidates/pipeline/summary?job_id=${jobId}`),
   processResumes: (jobId: string) =>
-    request(`/candidates/process-resumes?job_id=${jobId}`, { method: "POST" }),
+    request<TaskResponse>(`/candidates/process-resumes?job_id=${jobId}`, { method: "POST" }),
   analyzeGithub: (jobId: string) =>
-    request(`/candidates/analyze-github?job_id=${jobId}`, { method: "POST" }),
+    request<TaskResponse>(`/candidates/analyze-github?job_id=${jobId}`, { method: "POST" }),
 
   // Evaluations
   runEvaluations: (jobId: string, candidateIds?: string[]) =>
-    request("/evaluations/run", {
+    request<TaskResponse>("/evaluations/run", {
       method: "POST",
       body: JSON.stringify({ job_id: jobId, candidate_ids: candidateIds }),
     }),
   rankCandidates: (jobId: string) =>
-    request(`/evaluations/rank?job_id=${jobId}`, { method: "POST" }),
+    request<TaskResponse>(`/evaluations/rank?job_id=${jobId}`, { method: "POST" }),
+  getTaskStatus: (taskId: string) => request<TaskResponse>(`/tasks/${taskId}`),
   getRankings: (jobId: string) => request<RankingResponse>(`/evaluations/rankings/${jobId}`),
   getEvaluations: (jobId: string) => request<{ evaluations: Evaluation[]; total: number }>(`/evaluations/${jobId}`),
   getCandidateEvaluation: (candidateId: string) =>
@@ -365,13 +395,13 @@ export const api = {
   shortlistAiInterview: (data: { job_id: string; outcomes: Record<string, string>; send_email?: boolean }) =>
     authRequest("/assessments/ai-interview/shortlist", { method: "POST", body: JSON.stringify(data) }),
   getRoundSummary: (jobId: string) =>
-    authRequest<RoundSummary>(`/assessments/round-summary/${jobId}`),
+    authRequest<RoundSummary>(`/assessments/round-summary/${jobId}`, { timeoutMs: POLL_TIMEOUT_MS }),
   remindRound: (data: { job_id: string; round_type: string; source_ids?: string[] }) =>
     authRequest("/assessments/remind", { method: "POST", body: JSON.stringify(data) }),
   closeRound: (data: { job_id: string; round_type: string }) =>
     authRequest("/assessments/close-round", { method: "POST", body: JSON.stringify(data) }),
   rerankJob: (jobId: string) =>
-    authRequest("/assessments/rerank", { method: "POST", body: JSON.stringify({ job_id: jobId }) }),
+    authRequest<TaskResponse>("/assessments/rerank", { method: "POST", body: JSON.stringify({ job_id: jobId }) }),
   advanceToNextRound: (data: {
     job_id: string;
     round_type: string;
@@ -766,6 +796,11 @@ export interface RoundStats {
   not_shortlisted: number;
 }
 
+export interface AiInterviewPending {
+  candidate_id: string;
+  candidate?: Candidate | null;
+}
+
 export interface RoundSummary {
   job_id: string;
   assessment: (JobAssessment & { round_status?: string }) | null;
@@ -774,6 +809,7 @@ export interface RoundSummary {
   ai_stats: RoundStats;
   assignments: AssessmentAssignment[];
   ai_interviews: AiInterviewResult[];
+  ai_interviews_pending?: AiInterviewPending[];
   assessment_shortlisted_ids: string[];
   live_shortlisted_ids: string[];
 }

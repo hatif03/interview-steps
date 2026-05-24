@@ -108,13 +108,14 @@ class SupabaseRepo:
         self,
         collection: str,
         *,
+        columns: str = "*",
         filters: list[tuple[str, str, Any]] | None = None,
         order_by: str | None = None,
         order_desc: bool = False,
         limit: int | None = None,
         offset: int = 0,
     ) -> QueryResult:
-        q = self._table(collection).select("*")
+        q = self._table(collection).select(columns)
         for fld, op, val in filters or []:
             if op == "eq":
                 q = q.eq(fld, val)

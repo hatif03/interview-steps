@@ -22,9 +22,12 @@ def _now() -> str:
 
 def get_round_summary(job_id: str) -> dict:
     db = get_db()
-    job = db.get_by_id("jobs", job_id).data[0]
-    assessment = assessment_svc.get_assessment_for_job(job_id)
-    assignments = assessment_svc.get_job_results(job_id)
+    job_row = db.get_by_id("jobs", job_id)
+    if not job_row.data:
+        raise ValueError("Job not found")
+    job = job_row.data[0]
+    assessment = assessment_svc.get_assessment_meta_for_job(job_id)
+    assignments = assessment_svc.get_job_results_summary(job_id)
     ai_results = assessment_svc.get_job_ai_interview_results(job_id)
 
     assess_stats = {
@@ -72,15 +75,27 @@ def get_round_summary(job_id: str) -> dict:
             elif outcome == "not_shortlisted":
                 ai_stats["not_shortlisted"] += 1
         else:
-            sessions = db.query(
-                "mock_sessions",
-                filters=[("mock_interview_id", "eq", iv["id"])],
-            )
-            active = any(s.get("status") == "active" for s in sessions.data)
+            sessions = iv.get("_sessions") or []
+            active = any(s.get("status") == "active" for s in sessions)
             if active:
                 ai_stats["in_progress"] += 1
             else:
                 ai_stats["not_started"] += 1
+
+    ai_interviews = [{k: v for k, v in iv.items() if k != "_sessions"} for iv in ai_results]
+
+    shortlisted_ids = assessment_svc.get_shortlisted_for_ai_interview(job_id)
+    interview_cids = {iv["candidate_id"] for iv in ai_results}
+    pending_ids = [cid for cid in shortlisted_ids if cid not in interview_cids]
+    pending_candidates = []
+    if pending_ids:
+        cmap = {c["id"]: c for c in db.get_many_by_ids("candidates", pending_ids)}
+        pending_candidates = [
+            {"candidate_id": cid, "candidate": cmap.get(cid)}
+            for cid in pending_ids
+        ]
+        ai_stats["total"] += len(pending_ids)
+        ai_stats["not_started"] += len(pending_ids)
 
     return {
         "job_id": job_id,
@@ -92,8 +107,9 @@ def get_round_summary(job_id: str) -> dict:
         "assessment_stats": assess_stats,
         "ai_stats": ai_stats,
         "assignments": assignments,
-        "ai_interviews": ai_results,
-        "assessment_shortlisted_ids": assessment_svc.get_shortlisted_for_ai_interview(job_id),
+        "ai_interviews": ai_interviews,
+        "ai_interviews_pending": pending_candidates,
+        "assessment_shortlisted_ids": shortlisted_ids,
         "live_shortlisted_ids": assessment_svc.get_shortlisted_for_live_interview(job_id),
     }
 
@@ -104,7 +120,7 @@ async def remind_round(
     source_ids: list[str] | None = None,
 ) -> dict:
     if round_type == "platform_test":
-        assignments = assessment_svc.get_job_results(job_id)
+        assignments = assessment_svc.get_job_results_summary(job_id)
         targets = [
             a for a in assignments
             if a.get("status") in ("assigned", "in_progress")
@@ -138,7 +154,7 @@ async def close_round(job_id: str, round_type: str) -> dict:
             assessment["id"],
             {"round_status": "closed", "closed_at": _now()},
         )
-        assignments = assessment_svc.get_job_results(job_id)
+        assignments = assessment_svc.get_job_results_summary(job_id)
         rejected = 0
         for a in assignments:
             if a.get("status") in ("assigned", "in_progress"):
@@ -211,7 +227,7 @@ async def _advance_from_assessment(
     send_email: bool,
     auto_assign: bool,
 ) -> dict:
-    assignments = assessment_svc.get_job_results(job_id)
+    assignments = assessment_svc.get_job_results_summary(job_id)
     graded = [
         a for a in assignments
         if a.get("status") == "graded"

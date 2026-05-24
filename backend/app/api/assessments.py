@@ -18,6 +18,7 @@ from app.schemas.assessment import (
 )
 from app.services import assessment_service as svc
 from app.services import round_control_service as round_svc
+from app.tasks.queue import enqueue_task
 from app.services.notification_service import notify_ai_interview_shortlisted
 from app.services.hiring_rounds_service import complete_round
 from app.supabase_repo import get_db
@@ -200,7 +201,7 @@ async def shortlist_ai_interview(body: AiInterviewShortlistRequest):
 
 
 @router.get("/round-summary/{job_id}")
-async def get_round_summary(job_id: str):
+def get_round_summary(job_id: str):
     return round_svc.get_round_summary(job_id)
 
 
@@ -221,11 +222,8 @@ async def close_round(body: CloseRoundRequest):
 
 
 @router.post("/rerank")
-async def rerank_job(body: RerankRequest):
-    try:
-        return await round_svc.rerank_job(body.job_id)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+def rerank_job(body: RerankRequest):
+    return enqueue_task("compute_rankings", body.job_id)
 
 
 @router.post("/advance")

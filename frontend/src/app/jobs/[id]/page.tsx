@@ -1,7 +1,7 @@
 // @ts-nocheck
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { api, Job, Candidate, PipelineSummary, type AssessmentAssignment } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -205,6 +205,37 @@ function CandidatePicker({
   );
 }
 
+type AiPendingRow = { candidate_id: string; candidate?: Candidate | null };
+
+function mergeAiInterviewPending(
+  assessmentResults: AssessmentAssignment[],
+  aiInterviewResults: AiInterviewResult[],
+  aiInterviewsPending: AiPendingRow[],
+  shortlistedIds: string[],
+): AiPendingRow[] {
+  const assignedCandidateIds = new Set(aiInterviewResults.map((r) => r.candidate_id));
+  const byCandidate = new Map<string, AiPendingRow>();
+
+  for (const p of aiInterviewsPending) {
+    byCandidate.set(p.candidate_id, p);
+  }
+  for (const a of assessmentResults) {
+    if (a.result?.outcome !== "shortlisted") continue;
+    if (!assignedCandidateIds.has(a.candidate_id) && !byCandidate.has(a.candidate_id)) {
+      byCandidate.set(a.candidate_id, {
+        candidate_id: a.candidate_id,
+        candidate: a.candidate,
+      });
+    }
+  }
+  for (const cid of shortlistedIds) {
+    if (!assignedCandidateIds.has(cid) && !byCandidate.has(cid)) {
+      byCandidate.set(cid, { candidate_id: cid });
+    }
+  }
+  return [...byCandidate.values()];
+}
+
 export default function JobDetailPage() {
   const params = useParams();
   const router = useRouter();
@@ -233,6 +264,7 @@ export default function JobDetailPage() {
   const [assessmentSendEmail, setAssessmentSendEmail] = useState(true);
   const [assessmentResults, setAssessmentResults] = useState<AssessmentAssignment[]>([]);
   const [aiInterviewResults, setAiInterviewResults] = useState<AiInterviewResult[]>([]);
+  const [aiInterviewsPending, setAiInterviewsPending] = useState<Array<{ candidate_id: string; candidate?: Candidate | null }>>([]);
   const [shortlistedIds, setShortlistedIds] = useState<string[]>([]);
   const [liveShortlistedIds, setLiveShortlistedIds] = useState<string[]>([]);
   const [assessmentRoundStatus, setAssessmentRoundStatus] = useState("open");
@@ -267,65 +299,115 @@ export default function JobDetailPage() {
   };
 
   const prevCandidatesRef = useRef<Candidate[]>([]);
+  const refreshInFlightRef = useRef(false);
 
-  const refresh = useCallback(async () => {
+  const applyCandidateUpdates = useCallback((c: { candidates: Candidate[] }, prev: Candidate[]) => {
+    if (prev.length > 0) {
+      const prevMap = new Map(prev.map((x) => [x.id, x]));
+      let newlyCompleted = 0;
+      let newlyFailed = 0;
+      for (const cand of c.candidates) {
+        const old = prevMap.get(cand.id);
+        if (!old) continue;
+        if (old.pipeline_stage === "evaluating" && cand.pipeline_stage === "evaluated") newlyCompleted++;
+        if (old.pipeline_stage !== "error" && cand.pipeline_stage === "error") newlyFailed++;
+      }
+      if (newlyCompleted > 0) toast.success(`${newlyCompleted} candidate${newlyCompleted > 1 ? "s" : ""} evaluation complete`);
+      if (newlyFailed > 0) toast.error(`${newlyFailed} candidate${newlyFailed > 1 ? "s" : ""} failed — check error details`);
+
+      const allDone = c.candidates.every((x) => x.pipeline_stage !== "evaluating" && !(x.status_message && x.status_message.includes("Processing")));
+      const wasBusy = prev.some((x) => x.pipeline_stage === "evaluating" || (x.status_message && x.status_message.includes("Processing")));
+      if (wasBusy && allDone && c.candidates.length > 0) {
+        const errCount = c.candidates.filter((x) => x.pipeline_stage === "error").length;
+        if (errCount === 0) toast.success("All processing complete!");
+        else toast.warning(`Processing finished with ${errCount} error${errCount > 1 ? "s" : ""}`);
+      }
+    }
+
+    prevCandidatesRef.current = c.candidates;
+    setCandidates((existing) => {
+      if (!existing.length) return c.candidates;
+      const incoming = new Map(c.candidates.map((x) => [x.id, x]));
+      return existing.map((row) => {
+        const updated = incoming.get(row.id);
+        if (!updated) return row;
+        return { ...row, ...updated, scores: updated.scores ?? row.scores };
+      });
+    });
+  }, []);
+
+  const applyRoundSummary = useCallback((round: Awaited<ReturnType<typeof api.getRoundSummary>> | null) => {
+    if (round) {
+      setAssessmentResults(round.assignments || []);
+      setAiInterviewResults(round.ai_interviews || []);
+      setAiInterviewsPending(round.ai_interviews_pending || []);
+      setShortlistedIds(round.assessment_shortlisted_ids || []);
+      setLiveShortlistedIds(round.live_shortlisted_ids || []);
+      setAssessmentRoundStatus(round.assessment?.round_status || "open");
+      setAiRoundStatus(round.ai_interview_round_status || "open");
+      setAssessmentStats(round.assessment_stats || null);
+      setAiStats(round.ai_stats || null);
+    } else {
+      setAssessmentResults([]);
+      setAiInterviewResults([]);
+      setAiInterviewsPending([]);
+      setShortlistedIds([]);
+      setLiveShortlistedIds([]);
+    }
+  }, []);
+
+  const refreshRoundData = useCallback(async () => {
     try {
-      const [j, c, p, round] = await Promise.all([
+      const round = await api.getRoundSummary(jobId);
+      applyRoundSummary(round);
+    } catch (err) {
+      console.error(err);
+    }
+  }, [applyRoundSummary, jobId]);
+
+  const refresh = useCallback(async (options?: { light?: boolean }) => {
+    if (refreshInFlightRef.current) return;
+    refreshInFlightRef.current = true;
+    try {
+      if (options?.light) {
+        const c = await api.listCandidates({
+          job_id: jobId,
+          limit: 200,
+          summary: true,
+          include_scores: false,
+        }).catch((err) => {
+          console.error(err);
+          return null;
+        });
+        if (c) applyCandidateUpdates(c, prevCandidatesRef.current);
+        return;
+      }
+
+      const [jobResult, candidatesResult, pipelineResult] = await Promise.allSettled([
         api.getJob(jobId),
         api.listCandidates({ job_id: jobId, limit: 200 }),
         api.getPipelineSummary(jobId),
-        api.getRoundSummary(jobId).catch(() => null),
       ]);
-      if (round) {
-        setAssessmentResults(round.assignments || []);
-        setAiInterviewResults(round.ai_interviews || []);
-        setShortlistedIds(round.assessment_shortlisted_ids || []);
-        setLiveShortlistedIds(round.live_shortlisted_ids || []);
-        setAssessmentRoundStatus(round.assessment?.round_status || "open");
-        setAiRoundStatus(round.ai_interview_round_status || "open");
-        setAssessmentStats(round.assessment_stats || null);
-        setAiStats(round.ai_stats || null);
+
+      if (jobResult.status === "fulfilled") setJob(jobResult.value);
+      else console.error(jobResult.reason);
+
+      if (pipelineResult.status === "fulfilled") setPipeline(pipelineResult.value);
+      else console.error(pipelineResult.reason);
+
+      if (candidatesResult.status === "fulfilled") {
+        applyCandidateUpdates(candidatesResult.value, prevCandidatesRef.current);
       } else {
-        setAssessmentResults([]);
-        setAiInterviewResults([]);
-        setShortlistedIds([]);
-        setLiveShortlistedIds([]);
+        console.error(candidatesResult.reason);
       }
-      setJob(j);
-      setPipeline(p);
-
-      // Detect transitions and fire toasts
-      const prev = prevCandidatesRef.current;
-      if (prev.length > 0) {
-        const prevMap = new Map(prev.map((x) => [x.id, x]));
-        let newlyCompleted = 0;
-        let newlyFailed = 0;
-        for (const cand of c.candidates) {
-          const old = prevMap.get(cand.id);
-          if (!old) continue;
-          if (old.pipeline_stage === "evaluating" && cand.pipeline_stage === "evaluated") newlyCompleted++;
-          if (old.pipeline_stage !== "error" && cand.pipeline_stage === "error") newlyFailed++;
-        }
-        if (newlyCompleted > 0) toast.success(`${newlyCompleted} candidate${newlyCompleted > 1 ? "s" : ""} evaluation complete`);
-        if (newlyFailed > 0) toast.error(`${newlyFailed} candidate${newlyFailed > 1 ? "s" : ""} failed — check error details`);
-
-        const allDone = c.candidates.every((x) => x.pipeline_stage !== "evaluating" && !(x.status_message && x.status_message.includes("Processing")));
-        const wasBusy = prev.some((x) => x.pipeline_stage === "evaluating" || (x.status_message && x.status_message.includes("Processing")));
-        if (wasBusy && allDone && c.candidates.length > 0) {
-          const errCount = c.candidates.filter((x) => x.pipeline_stage === "error").length;
-          if (errCount === 0) toast.success("All processing complete!");
-          else toast.warning(`Processing finished with ${errCount} error${errCount > 1 ? "s" : ""}`);
-        }
-      }
-
-      prevCandidatesRef.current = c.candidates;
-      setCandidates(c.candidates);
-    } catch (err) {
-      console.error(err);
     } finally {
+      refreshInFlightRef.current = false;
       setLoading(false);
+      if (!options?.light) void refreshRoundData();
     }
-  }, [jobId]);
+  }, [applyCandidateUpdates, jobId, refreshRoundData]);
+
+  const wasProcessingRef = useRef(false);
 
   useEffect(() => { refresh(); }, [refresh]);
 
@@ -335,8 +417,13 @@ export default function JobDetailPage() {
       (c) => c.pipeline_stage === "evaluating" || c.pipeline_stage === "uploaded" ||
              (c.status_message && c.status_message.includes("Processing"))
     );
+    if (wasProcessingRef.current && !hasProcessing) {
+      void refresh();
+    }
+    wasProcessingRef.current = hasProcessing;
+
     if (hasProcessing) {
-      autoRefreshRef.current = setInterval(refresh, 3000);
+      autoRefreshRef.current = setInterval(() => refresh({ light: true }), 5000);
     } else if (autoRefreshRef.current) {
       clearInterval(autoRefreshRef.current);
       autoRefreshRef.current = null;
@@ -412,6 +499,23 @@ export default function JobDetailPage() {
     }
   };
 
+  const mergedAiPending = useMemo(
+    () =>
+      mergeAiInterviewPending(
+        assessmentResults,
+        aiInterviewResults,
+        aiInterviewsPending,
+        shortlistedIds
+      ),
+    [assessmentResults, aiInterviewResults, aiInterviewsPending, shortlistedIds]
+  );
+
+  const showAiHub =
+    aiInterviewResults.length > 0 ||
+    mergedAiPending.length > 0 ||
+    assessmentResults.some((a) => a.result?.outcome === "shortlisted") ||
+    shortlistedIds.length > 0;
+
   if (loading) return <PageSkeleton rows={4} />;
   if (!job) return <p className="text-destructive">Job not found.</p>;
 
@@ -466,8 +570,6 @@ export default function JobDetailPage() {
     not_shortlisted: aiInterviewResults.filter((r) => r.outcome === "not_shortlisted").length,
   };
 
-  const showAiHub = aiInterviewResults.length > 0 || shortlistedIds.length > 0;
-
   const applyTestTopN = () => {
     setTestSelectedIds(new Set(rankedCandidates.slice(0, testTopN).map((c) => c.id)));
   };
@@ -508,8 +610,16 @@ export default function JobDetailPage() {
     {
       id: "ai",
       label: "AI Interview",
-      status: aiInterviewResults.length === 0 ? "pending" : aiAwaitingReview > 0 ? "active" : "completed",
-      detail: aiInterviewResults.length ? `${aiInterviewResults.length} assigned` : undefined,
+      status:
+        aiInterviewResults.length === 0 && mergedAiPending.length === 0
+          ? "pending"
+          : aiAwaitingReview > 0
+            ? "active"
+            : "completed",
+      detail:
+        aiInterviewResults.length || mergedAiPending.length
+          ? `${aiInterviewResults.length + mergedAiPending.length} in round`
+          : undefined,
     },
     {
       id: "live",
@@ -904,7 +1014,7 @@ export default function JobDetailPage() {
                 )
               }
               onRerank={() =>
-                runRoundAction("Rankings recomputed", () => api.rerankJob(jobId))
+                runRoundAction("Rankings recomputation started", () => api.rerankJob(jobId))
               }
               onAdvanceTopN={(n) =>
                 runRoundAction(`Advanced top ${n} to AI interview`, () =>
@@ -951,9 +1061,19 @@ export default function JobDetailPage() {
             >
               <AiInterviewRoundHub
                 interviews={aiInterviewResults}
+                pending={mergedAiPending}
                 stats={aiStats || defaultAiStats}
                 roundStatus={aiRoundStatus}
                 loading={reviewLoading}
+                onAssignPending={() =>
+                  runRoundAction("AI interviews assigned", () =>
+                    api.assignMockInterview({
+                      job_id: jobId,
+                      candidate_ids: mergedAiPending.map((p) => p.candidate_id),
+                      send_email: true,
+                    })
+                  )
+                }
                 onRemind={(ids) =>
                   runRoundAction("Reminders sent", () =>
                     api.remindRound({
@@ -969,7 +1089,7 @@ export default function JobDetailPage() {
                   )
                 }
                 onRerank={() =>
-                  runRoundAction("Rankings recomputed", () => api.rerankJob(jobId))
+                  runRoundAction("Rankings recomputation started", () => api.rerankJob(jobId))
                 }
                 onAdvanceTopN={(n) =>
                   runRoundAction(`Advanced top ${n} to live interview`, () =>

@@ -77,7 +77,7 @@ async def list_jobs(user: dict = Depends(require_recruiter)):
 
 
 @router.get("/{job_id}", response_model=JobResponse)
-async def get_job(job_id: str, user: dict = Depends(require_recruiter)):
+def get_job(job_id: str, user: dict = Depends(require_recruiter)):
     db = get_db()
     result = db.get_by_id("jobs", job_id)
     if not result.data:

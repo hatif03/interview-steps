@@ -24,7 +24,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import type { AiInterviewResult, RoundStats } from "@/lib/api";
+import type { AiInterviewPending, AiInterviewResult, RoundStats } from "@/lib/api";
 import { TopNInput } from "./TopNInput";
 import { isPendingOutcome, RoundOutcomeBadge } from "./RoundOutcomeBadge";
 import { Bell, Lock, RefreshCw, ArrowRight, XCircle } from "lucide-react";
@@ -36,9 +36,11 @@ function interviewStatus(row: AiInterviewResult): string {
 
 export function AiInterviewRoundHub({
   interviews,
+  pending = [],
   stats,
   roundStatus,
   loading,
+  onAssignPending,
   onRemind,
   onCloseRound,
   onRerank,
@@ -47,9 +49,11 @@ export function AiInterviewRoundHub({
   onRejectSelected,
 }: {
   interviews: AiInterviewResult[];
+  pending?: AiInterviewPending[];
   stats: RoundStats;
   roundStatus: string;
   loading?: boolean;
+  onAssignPending?: () => void;
   onRemind: (ids?: string[]) => void;
   onCloseRound: () => void;
   onRerank: () => void;
@@ -65,7 +69,7 @@ export function AiInterviewRoundHub({
     [interviews]
   );
 
-  if (interviews.length === 0) return null;
+  const hasRows = interviews.length > 0 || pending.length > 0;
 
   const statItems = [
     { label: "Assigned", value: stats.total },
@@ -195,6 +199,31 @@ export function AiInterviewRoundHub({
           </div>
         </div>
 
+        {pending.length > 0 && (
+          <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs text-amber-900">
+              {pending.length} shortlisted candidate{pending.length !== 1 ? "s" : ""} need an AI interview assigned.
+            </p>
+            {onAssignPending && (
+              <Button size="sm" className="h-7 text-xs" disabled={loading} onClick={onAssignPending}>
+                Assign AI interviews
+              </Button>
+            )}
+          </div>
+        )}
+
+        {!hasRows && onAssignPending && (
+          <div className="rounded-md border border-dashed px-4 py-6 text-center space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Shortlisted candidates from the assessment round will appear here once AI interviews are assigned.
+            </p>
+            <Button size="sm" disabled={loading || pending.length === 0} onClick={onAssignPending}>
+              Assign AI interviews
+            </Button>
+          </div>
+        )}
+
+        {hasRows && (
         <Table>
           <TableHeader>
             <TableRow>
@@ -208,6 +237,22 @@ export function AiInterviewRoundHub({
             </TableRow>
           </TableHeader>
           <TableBody>
+            {pending.map((p) => (
+              <TableRow key={`pending-${p.candidate_id}`} className="bg-amber-50/50">
+                <TableCell />
+                <TableCell>
+                  <div className="text-sm font-medium">{p.candidate?.name || "—"}</div>
+                  <div className="text-[10px] text-muted-foreground">{p.candidate?.email}</div>
+                </TableCell>
+                <TableCell className="text-xs text-muted-foreground">—</TableCell>
+                <TableCell className="text-xs text-amber-800">Awaiting assignment</TableCell>
+                <TableCell>
+                  <Badge variant="outline" className="text-[10px]">Advanced from assessment</Badge>
+                </TableCell>
+                <TableCell className="text-xs">—</TableCell>
+                <TableCell className="text-xs text-muted-foreground">—</TableCell>
+              </TableRow>
+            ))}
             {interviews.map((r) => (
               <TableRow key={r.id}>
                 <TableCell>
@@ -232,6 +277,7 @@ export function AiInterviewRoundHub({
             ))}
           </TableBody>
         </Table>
+        )}
       </CardContent>
     </Card>
   );

@@ -110,10 +110,16 @@ async def assign_mock_interviews(
     send_email: bool = False,
 ) -> list[dict]:
     db = get_db()
+    existing = db.query("mock_interviews", filters=[("job_id", "eq", job_id)])
+    existing_by_candidate = {iv["candidate_id"]: iv for iv in existing.data}
+
     created = []
     interview_ids: dict[str, str] = {}
 
     for cid in candidate_ids:
+        if cid in existing_by_candidate:
+            interview_ids[cid] = existing_by_candidate[cid]["id"]
+            continue
         interview = await generate_questions(job_id, cid, interview_type, question_count)
         created.append(interview)
         interview_ids[cid] = interview["id"]
@@ -130,9 +136,22 @@ async def assign_mock_interviews(
         })
 
     if send_email:
-        await send_mock_interview_invites(job_id, candidate_ids, interview_ids)
+        await send_mock_interview_invites(job_id, list(interview_ids.keys()), interview_ids)
 
     return created
+
+
+async def ensure_ai_interviews_for_candidates(
+    job_id: str,
+    candidate_ids: list[str],
+    *,
+    send_email: bool = False,
+) -> list[dict]:
+    """Create AI interviews for shortlisted candidates who do not have one yet."""
+    unique_ids = list(dict.fromkeys(candidate_ids))
+    if not unique_ids:
+        return []
+    return await assign_mock_interviews(job_id, unique_ids, send_email=send_email)
 
 
 async def start_session(mock_interview_id: str, user_id: str | None = None) -> dict:

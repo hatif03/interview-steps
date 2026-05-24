@@ -486,6 +486,7 @@ async def set_shortlist_outcomes(
 
     db = get_db()
     updated = []
+    shortlisted_candidate_ids: list[str] = []
     for assignment_id, outcome in assignment_outcomes.items():
         rows = db.query(
             "assessment_results",
@@ -520,6 +521,7 @@ async def set_shortlist_outcomes(
                 "pipeline_stage": "shortlisted",
                 "status_message": msg,
             })
+            shortlisted_candidate_ids.append(cid)
         else:
             complete_round(
                 assignment_id,
@@ -535,10 +537,32 @@ async def set_shortlist_outcomes(
 
         updated.append({"assignment_id": assignment_id, "outcome": outcome})
 
+    if shortlisted_candidate_ids:
+        from app.services.mock_interview_service import ensure_ai_interviews_for_candidates
+
+        await ensure_ai_interviews_for_candidates(
+            job_id,
+            shortlisted_candidate_ids,
+            send_email=send_email,
+        )
+
     return updated
 
 
-def get_job_results(job_id: str) -> list[dict]:
+def get_assessment_meta_for_job(job_id: str) -> dict | None:
+    """Assessment row for a job without loading questions."""
+    db = get_db()
+    rows = db.query(
+        "job_assessments",
+        filters=[("job_id", "eq", job_id)],
+        order_by="created_at",
+        order_desc=True,
+    )
+    return rows.data[0] if rows.data else None
+
+
+def get_job_results_summary(job_id: str) -> list[dict]:
+    """Recruiter hub view — assignment + result + candidate, no questions or answers."""
     db = get_db()
     assignments = db.query(
         "assessment_assignments",
@@ -546,32 +570,56 @@ def get_job_results(job_id: str) -> list[dict]:
         order_by="assigned_at",
         order_desc=True,
     )
-    results = []
-    for a in assignments.data:
-        enriched = get_assignment(a["id"], include_answers=True)
-        if enriched:
-            cand = db.get_by_id("candidates", a["candidate_id"])
-            enriched["candidate"] = cand.data[0] if cand.data else None
-            results.append(enriched)
-    return results
+    if not assignments.data:
+        return []
+
+    assignment_ids = [a["id"] for a in assignments.data]
+    candidate_ids = list({a["candidate_id"] for a in assignments.data})
+
+    result_rows = db.query(
+        "assessment_results",
+        filters=[("assignment_id", "in", assignment_ids)],
+    )
+    results_map = {r["assignment_id"]: r for r in result_rows.data}
+
+    candidates_map = {
+        c["id"]: c for c in db.get_many_by_ids("candidates", candidate_ids)
+    }
+
+    return [
+        {
+            **a,
+            "result": results_map.get(a["id"]),
+            "candidate": candidates_map.get(a["candidate_id"]),
+        }
+        for a in assignments.data
+    ]
+
+
+def get_job_results(job_id: str) -> list[dict]:
+    return get_job_results_summary(job_id)
 
 
 def get_shortlisted_for_ai_interview(job_id: str) -> list[str]:
     """Candidate IDs shortlisted from platform assessment."""
     db = get_db()
     assignments = db.query("assessment_assignments", filters=[("job_id", "eq", job_id)])
-    shortlisted = []
-    for a in assignments.data:
-        res = db.query(
-            "assessment_results",
-            filters=[
-                ("assignment_id", "eq", a["id"]),
-                ("outcome", "eq", "shortlisted"),
-            ],
-        )
-        if res.data:
-            shortlisted.append(a["candidate_id"])
-    return list(set(shortlisted))
+    if not assignments.data:
+        return []
+    assignment_ids = [a["id"] for a in assignments.data]
+    by_assignment = {a["id"]: a["candidate_id"] for a in assignments.data}
+    shortlisted = db.query(
+        "assessment_results",
+        filters=[
+            ("assignment_id", "in", assignment_ids),
+            ("outcome", "eq", "shortlisted"),
+        ],
+    )
+    return list({
+        by_assignment[r["assignment_id"]]
+        for r in shortlisted.data
+        if r["assignment_id"] in by_assignment
+    })
 
 
 def get_job_ai_interview_results(job_id: str) -> list[dict]:
@@ -583,27 +631,61 @@ def get_job_ai_interview_results(job_id: str) -> list[dict]:
         order_by="created_at",
         order_desc=True,
     )
+    if not interviews.data:
+        return []
+
+    interview_ids = [iv["id"] for iv in interviews.data]
+    candidate_ids = list({iv["candidate_id"] for iv in interviews.data})
+
+    feedback_rows = db.query(
+        "mock_feedback",
+        filters=[("interview_id", "in", interview_ids)],
+    )
+    feedback_map = {f["interview_id"]: f for f in feedback_rows.data}
+
+    round_rows = db.query(
+        "hiring_rounds",
+        filters=[
+            ("job_id", "eq", job_id),
+            ("round_type", "eq", "ai_interview"),
+            ("reference_id", "in", interview_ids),
+        ],
+        order_by="created_at",
+        order_desc=True,
+    )
+    rounds_map: dict[str, dict] = {}
+    for row in round_rows.data:
+        ref = row.get("reference_id")
+        if ref and ref not in rounds_map:
+            rounds_map[ref] = row
+
+    candidates_map = {
+        c["id"]: c for c in db.get_many_by_ids("candidates", candidate_ids)
+    }
+
+    pending_ids = [iid for iid in interview_ids if iid not in feedback_map]
+    sessions_by_interview: dict[str, list[dict]] = {}
+    if pending_ids:
+        session_rows = db.query(
+            "mock_sessions",
+            filters=[("mock_interview_id", "in", pending_ids)],
+        )
+        for session in session_rows.data:
+            mid = session.get("mock_interview_id")
+            if mid:
+                sessions_by_interview.setdefault(mid, []).append(session)
+
     results = []
     for iv in interviews.data:
-        fb = db.query("mock_feedback", filters=[("interview_id", "eq", iv["id"])])
-        rounds = db.query(
-            "hiring_rounds",
-            filters=[
-                ("reference_id", "eq", iv["id"]),
-                ("round_type", "eq", "ai_interview"),
-            ],
-            order_by="created_at",
-            order_desc=True,
-        )
-        cand = db.get_by_id("candidates", iv["candidate_id"])
-        feedback = fb.data[0] if fb.data else None
-        round_row = rounds.data[0] if rounds.data else None
+        feedback = feedback_map.get(iv["id"])
+        round_row = rounds_map.get(iv["id"])
         outcome = round_row.get("outcome", "pending") if round_row and feedback else None
         results.append({
             **iv,
             "feedback": feedback,
             "outcome": outcome,
-            "candidate": cand.data[0] if cand.data else None,
+            "candidate": candidates_map.get(iv["candidate_id"]),
+            "_sessions": sessions_by_interview.get(iv["id"], []),
         })
     return results
 

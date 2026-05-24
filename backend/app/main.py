@@ -4,7 +4,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
-from app.api import jobs, candidates, evaluations, tests, interviews, mock_interviews, auth, public, candidate_portal, assessments
+from app.api import jobs, candidates, evaluations, tests, interviews, mock_interviews, auth, public, candidate_portal, assessments, tasks
 
 
 class _SuppressReloadNoise(logging.Filter):
@@ -43,8 +43,17 @@ app.include_router(assessments.router, prefix="/api/assessments", tags=["Assessm
 app.include_router(auth.router, prefix="/api/auth", tags=["Auth"])
 app.include_router(public.router, prefix="/api/public", tags=["Public"])
 app.include_router(candidate_portal.router, prefix="/api/candidate", tags=["Candidate Portal"])
+app.include_router(tasks.router, prefix="/api/tasks", tags=["Tasks"])
 
 
 @app.get("/api/health")
-async def health_check():
-    return {"status": "healthy", "version": "2.0.0", "database": "supabase"}
+def health_check():
+    from app.tasks.queue import _get_redis_queue
+
+    queue = _get_redis_queue()
+    return {
+        "status": "healthy",
+        "version": "2.0.0",
+        "database": "supabase",
+        "task_queue": "rq" if queue else "thread",
+    }

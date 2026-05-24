@@ -19,3 +19,5 @@ google-auth-oauthlib>=1.2.1
 Jinja2==3.1.6
 aiofiles==24.1.0
 pytest==8.3.5
+redis==5.2.1
+rq==2.1.0

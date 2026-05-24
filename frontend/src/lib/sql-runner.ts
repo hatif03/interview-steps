@@ -6,6 +6,22 @@ export type SqlRunResult = {
   rows?: Record<string, unknown>[];
 };
 
+type SqlJsStatic = import("sql.js").SqlJsStatic;
+
+let sqlInitPromise: Promise<SqlJsStatic> | null = null;
+
+async function getSqlJs(): Promise<SqlJsStatic> {
+  if (!sqlInitPromise) {
+    sqlInitPromise = import("sql.js").then((mod) =>
+      mod.default({
+        // Serve WASM from same origin — loading from sql.js.org fails in many dev/prod setups.
+        locateFile: (file: string) => `/vendor/sql.js/${file}`,
+      })
+    );
+  }
+  return sqlInitPromise;
+}
+
 function normalizeRows(rows: Record<string, unknown>[]): string {
   const sorted = rows.map((r) =>
     JSON.stringify(
@@ -26,10 +42,7 @@ export async function runSqlQuery(
   }
 
   try {
-    const initSqlJs = (await import("sql.js")).default;
-    const SQL = await initSqlJs({
-      locateFile: (file: string) => `https://sql.js.org/dist/${file}`,
-    });
+    const SQL = await getSqlJs();
     const db = new SQL.Database();
 
     for (const table of schema.tables || []) {
