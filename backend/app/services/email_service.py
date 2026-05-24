@@ -52,11 +52,11 @@ MOCK_INTERVIEW_EMAIL_TEMPLATE = """
 <html>
 <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
   <div style="background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%); padding: 30px; border-radius: 10px 10px 0 0;">
-    <h1 style="color: white; margin: 0;">Mock Interview Invitation</h1>
+    <h1 style="color: white; margin: 0;">Automated AI Interview Invitation</h1>
   </div>
   <div style="padding: 30px; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 0 0 10px 10px;">
     <p>Dear <strong>{candidate_name}</strong>,</p>
-    <p>You have been invited to complete an AI-powered mock interview for the <strong>{job_title}</strong> position.</p>
+    <p>You have been invited to complete an Automated AI Interview for the <strong>{job_title}</strong> position.</p>
     <p>Sign in to the candidate portal with this email address to take your personalized voice interview and receive feedback.</p>
     <div style="text-align: center; margin: 25px 0;">
       <a href="{portal_link}" style="background: #6366f1; color: white; padding: 12px 30px; border-radius: 6px; text-decoration: none; font-weight: bold;">Go to Candidate Portal</a>
@@ -85,13 +85,16 @@ def _send_email(to_email: str, subject: str, html_body: str):
 
 def _log_email(candidate_id: str, job_id: str, email_type: str, status: str):
     db = get_db()
-    db.insert("email_logs", {
-        "candidate_id": candidate_id,
-        "job_id": job_id,
-        "email_type": email_type,
-        "status": status,
-        "sent_at": datetime.now(timezone.utc).isoformat(),
-    })
+    try:
+        db.insert("email_logs", {
+            "candidate_id": candidate_id,
+            "job_id": job_id,
+            "email_type": email_type,
+            "status": status,
+            "sent_at": datetime.now(timezone.utc).isoformat(),
+        })
+    except Exception as e:
+        print(f"Failed to log email for candidate {candidate_id}: {e}")
 
 
 async def send_test_emails(
@@ -180,8 +183,8 @@ async def send_mock_interview_invites(job_id: str, candidate_ids: list[str], int
         )
 
         try:
-            _send_email(candidate["email"], f"Mock Interview Invitation - {job['title']}", html)
-            _log_email(cid, job_id, "mock_interview_invite", "sent")
+            _send_email(candidate["email"], f"Automated AI Interview - {job['title']}", html)
+            _log_email(cid, job_id, "ai_interview_invite", "sent")
         except Exception as e:
             print(f"Failed to send mock interview email to {candidate['email']}: {e}")
             _log_email(cid, job_id, "mock_interview_invite", f"failed: {str(e)[:200]}")

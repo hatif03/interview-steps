@@ -15,7 +15,7 @@ import { authErrorMessage, EmailConfirmationRequiredError } from "@/lib/auth-err
 const FEATURES = [
   "AI-powered resume screening at scale",
   "Pipeline kanban with stage tracking",
-  "Mock voice interviews with instant feedback",
+  "Automated AI voice interviews with instant feedback",
 ];
 
 export default function RecruiterSignInPage() {

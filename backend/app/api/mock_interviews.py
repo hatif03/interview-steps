@@ -29,7 +29,7 @@ async def assign_mock_interview(request: AssignMockInterviewRequest, background_
                 request.interview_type,
                 request.question_count,
             )
-        return {"message": f"Assigned {len(created)} mock interviews", "interviews": created}
+        return {"message": f"Assigned {len(created)} automated AI interviews", "interviews": created}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

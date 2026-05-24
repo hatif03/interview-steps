@@ -80,7 +80,8 @@ export default function NewJobPage() {
         router.push(`/jobs/${job.id}`);
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to create job");
+      const message = err instanceof Error ? err.message : "Failed to create job";
+      toast.error(message);
     } finally {
       setLoading(false);
     }
@@ -90,15 +91,21 @@ export default function NewJobPage() {
     ? `${typeof window !== "undefined" ? window.location.origin : ""}/apply/${createdSlug}`
     : "";
 
-  if (createdSlug && createdJobId) {
+  if (createdJobId && form.enableApplyForm) {
     return (
       <div className="max-w-2xl mx-auto space-y-6">
         <Card>
           <CardContent className="pt-8 pb-8 text-center space-y-4">
             <Badge className="mb-2">Job published</Badge>
-            <h2 className="text-xl font-bold">Share your application link</h2>
-            <p className="text-sm text-muted-foreground">Candidates can apply using this link after signing in.</p>
-            <CopyLinkButton url={applyUrl} />
+            <h2 className="text-xl font-bold">
+              {createdSlug ? "Share your application link" : "Job created"}
+            </h2>
+            <p className="text-sm text-muted-foreground">
+              {createdSlug
+                ? "Candidates can apply using this link after signing in."
+                : "Your job is ready. Upload candidates or manage it from the job page."}
+            </p>
+            {createdSlug ? <CopyLinkButton url={applyUrl} /> : null}
             <div className="flex gap-3 justify-center pt-4">
               <Button variant="outline" onClick={() => router.push("/jobs")}>All jobs</Button>
               <Button onClick={() => router.push(`/jobs/${createdJobId}`)}>View job</Button>

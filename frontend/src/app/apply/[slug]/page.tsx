@@ -1,13 +1,23 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import Link from "next/link";
 import { motion } from "framer-motion";
 import { Building2, MapPin, Briefcase, CheckCircle2 } from "lucide-react";
-import { api, PublicJob, ApplyFormPayload } from "@/lib/api";
+import { api, PublicJob } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { usePortalProfile } from "@/lib/portal-profile-context";
+import {
+  applyFormToProfilePayload,
+  getApplyFormConfig,
+  hasResume,
+  mergeApplyFormWithExtracted,
+  profileToApplyForm,
+  type ApplyFormFieldKey,
+  type ApplyFormState,
+  APPLY_FIELD_LABELS,
+} from "@/lib/apply-form";
+import { ResumeSection } from "@/components/apply/resume-section";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { LinkButton } from "@/components/link-button";
@@ -25,12 +35,18 @@ export default function ApplyPage() {
   const { slug } = useParams<{ slug: string }>();
   const router = useRouter();
   const { user, profile } = useAuth();
-  const { candidateProfile, portalReady, candidateOnboardingComplete } = usePortalProfile();
+  const { candidateProfile, portalReady, candidateOnboardingComplete, setCandidateProfileLocal } =
+    usePortalProfile();
   const [job, setJob] = useState<PublicJob | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [parsedHint, setParsedHint] = useState(false);
   const [view, setView] = useState<View>("preview");
-  const [form, setForm] = useState<ApplyFormPayload>({});
+  const [form, setForm] = useState<ApplyFormState>({});
+  const prefilledRef = useRef(false);
+
+  const fieldConfig = getApplyFormConfig(job?.apply_form_config);
 
   useEffect(() => {
     api.getPublicJob(slug).then(setJob).catch(() => toast.error("Job not found")).finally(() => setLoading(false));
@@ -43,19 +59,13 @@ export default function ApplyPage() {
       router.push(`/candidate/onboarding?redirect=/apply/${slug}`);
       return;
     }
+  }, [user, profile, slug, router, portalReady, candidateOnboardingComplete]);
 
-    if (candidateProfile?.onboarding_completed) {
-      setForm({
-        college: candidateProfile.college,
-        branch: candidateProfile.branch,
-        cgpa: candidateProfile.cgpa,
-        best_ai_project: candidateProfile.best_ai_project,
-        research_work: candidateProfile.research_work,
-        github_url: candidateProfile.github_url,
-        resume_url: candidateProfile.resume_url,
-      });
-    }
-  }, [user, profile, slug, router, portalReady, candidateProfile, candidateOnboardingComplete]);
+  useEffect(() => {
+    if (view !== "form" || !portalReady || !candidateProfile || prefilledRef.current) return;
+    prefilledRef.current = true;
+    setForm(profileToApplyForm(candidateProfile));
+  }, [view, portalReady, candidateProfile]);
 
   const handleApplyClick = () => {
     if (!user) {
@@ -69,11 +79,105 @@ export default function ApplyPage() {
     setView("form");
   };
 
+  const applyResumeResult = (result: Awaited<ReturnType<typeof api.uploadResume>>) => {
+    setForm((prev) =>
+      mergeApplyFormWithExtracted(prev, result.extracted, result.resume_url, result.resume_text)
+    );
+    if (candidateProfile) {
+      setCandidateProfileLocal({
+        ...candidateProfile,
+        resume_url: result.resume_url || candidateProfile.resume_url,
+        resume_text: result.resume_text,
+        college: candidateProfile.college || result.extracted.college,
+        branch: candidateProfile.branch || result.extracted.branch,
+        cgpa: candidateProfile.cgpa ?? result.extracted.cgpa,
+        github_url: candidateProfile.github_url || result.extracted.github_url,
+        best_ai_project: candidateProfile.best_ai_project || result.extracted.best_ai_project,
+        research_work: candidateProfile.research_work || result.extracted.research_work,
+      });
+    }
+    setParsedHint(true);
+  };
+
+  const uploadResumeFile = async (file: File) => {
+    setUploading(true);
+    setParsedHint(false);
+    try {
+      const result = await api.uploadResume(file);
+      applyResumeResult(result);
+      toast.success("Resume uploaded — review pre-filled fields below");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to upload resume");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const extractFromUrl = async (url: string) => {
+    setUploading(true);
+    setParsedHint(false);
+    try {
+      const result = await api.extractResumeFromUrl(url);
+      applyResumeResult(result);
+      toast.success("Resume processed — review pre-filled fields below");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to read resume link");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleResumeClear = () => {
+    setForm((prev) => ({ ...prev, resume_url: undefined, resume_text: undefined }));
+    setParsedHint(false);
+  };
+
+  const validateForm = (): boolean => {
+    if (fieldConfig.resume_url.enabled && fieldConfig.resume_url.required && !hasResume(form, candidateProfile)) {
+      toast.error("Please upload or link your resume before submitting");
+      return false;
+    }
+
+    const checks: { key: ApplyFormFieldKey; value: string | number | undefined }[] = [
+      { key: "college", value: form.college },
+      { key: "branch", value: form.branch },
+      { key: "github_url", value: form.github_url },
+      { key: "best_ai_project", value: form.best_ai_project },
+      { key: "research_work", value: form.research_work },
+    ];
+
+    for (const { key, value } of checks) {
+      const cfg = fieldConfig[key];
+      if (cfg.enabled && cfg.required && !String(value ?? "").trim()) {
+        toast.error(`${APPLY_FIELD_LABELS[key]} is required`);
+        return false;
+      }
+    }
+
+    return true;
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!validateForm()) return;
+
     setSubmitting(true);
     try {
-      await api.applyToJob(slug, form);
+      const profilePayload = applyFormToProfilePayload(form);
+      const updatedProfile = await api.updateCandidateProfile(profilePayload);
+      setCandidateProfileLocal(updatedProfile);
+
+      const applyPayload = {
+        college: form.college,
+        branch: form.branch,
+        cgpa: form.cgpa,
+        best_ai_project: form.best_ai_project,
+        research_work: form.research_work,
+        github_url: form.github_url,
+        resume_url: form.resume_url || updatedProfile.resume_url,
+      };
+
+      await api.applyToJob(slug, applyPayload);
       setView("success");
       toast.success("Application submitted!");
     } catch (err) {
@@ -81,6 +185,63 @@ export default function ApplyPage() {
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const updateField = (key: keyof ApplyFormState, value: string | number | undefined) => {
+    setForm((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const busy = submitting || uploading;
+
+  const renderField = (key: ApplyFormFieldKey) => {
+    const cfg = fieldConfig[key];
+    if (!cfg.enabled || key === "resume_url") return null;
+
+    const required = cfg.required;
+    const label = APPLY_FIELD_LABELS[key];
+
+    if (key === "best_ai_project" || key === "research_work") {
+      return (
+        <div key={key}>
+          <Label>{label}</Label>
+          <Textarea
+            value={(form[key] as string) || ""}
+            onChange={(e) => updateField(key, e.target.value)}
+            rows={key === "best_ai_project" ? 3 : 2}
+            required={required}
+          />
+        </div>
+      );
+    }
+
+    if (key === "cgpa") {
+      return (
+        <div key={key}>
+          <Label>{label}</Label>
+          <Input
+            type="number"
+            step="0.01"
+            value={form.cgpa ?? ""}
+            onChange={(e) => {
+              const val = e.target.value;
+              updateField("cgpa", val ? parseFloat(val) : undefined);
+            }}
+            required={required}
+          />
+        </div>
+      );
+    }
+
+    return (
+      <div key={key}>
+        <Label>{label}</Label>
+        <Input
+          value={(form[key] as string) || ""}
+          onChange={(e) => updateField(key, e.target.value)}
+          required={required}
+        />
+      </div>
+    );
   };
 
   if (loading) return <div className="max-w-2xl mx-auto p-8"><PageSkeleton rows={4} /></div>;
@@ -106,48 +267,58 @@ export default function ApplyPage() {
   }
 
   if (view === "form" && user) {
+    if (!portalReady || !candidateProfile) {
+      return (
+        <div className="min-h-screen bg-gradient-to-b from-background via-muted/30 to-background py-12 px-4">
+          <AppContainer size="candidate">
+            <div className="max-w-xl mx-auto">
+              <PageSkeleton rows={6} />
+            </div>
+          </AppContainer>
+        </div>
+      );
+    }
+
     return (
       <div className="min-h-screen bg-gradient-to-b from-background via-muted/30 to-background py-12 px-4">
         <AppContainer size="candidate">
           <Card className="rounded-2xl shadow-sm max-w-xl mx-auto">
             <CardHeader>
               <CardTitle>Apply to {job.title}</CardTitle>
-              <p className="text-sm text-muted-foreground">Review and submit your application details</p>
+              <p className="text-sm text-muted-foreground">
+                Review and submit your application details
+              </p>
             </CardHeader>
             <CardContent>
-              <form onSubmit={handleSubmit} className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label>College</Label>
-                    <Input value={form.college || ""} onChange={(e) => setForm({ ...form, college: e.target.value })} required />
-                  </div>
-                  <div>
-                    <Label>Branch</Label>
-                    <Input value={form.branch || ""} onChange={(e) => setForm({ ...form, branch: e.target.value })} required />
-                  </div>
+              <form onSubmit={handleSubmit} className="space-y-6">
+                {fieldConfig.resume_url.enabled && (
+                  <ResumeSection
+                    resumeUrl={form.resume_url || candidateProfile.resume_url}
+                    resumeText={form.resume_text || candidateProfile.resume_text}
+                    uploading={uploading}
+                    parsedHint={parsedHint}
+                    onUpload={(file) => void uploadResumeFile(file)}
+                    onExtractFromUrl={(url) => void extractFromUrl(url)}
+                    onClear={handleResumeClear}
+                    onResumeUrlChange={(url) => updateField("resume_url", url)}
+                  />
+                )}
+
+                <div className="space-y-4 border-t pt-6">
+                  {(fieldConfig.college.enabled || fieldConfig.branch.enabled) && (
+                    <div className="grid grid-cols-2 gap-4">
+                      {fieldConfig.college.enabled && renderField("college")}
+                      {fieldConfig.branch.enabled && renderField("branch")}
+                    </div>
+                  )}
+                  {renderField("cgpa")}
+                  {renderField("github_url")}
+                  {renderField("best_ai_project")}
+                  {renderField("research_work")}
                 </div>
-                <div>
-                  <Label>CGPA</Label>
-                  <Input type="number" step="0.01" value={form.cgpa ?? ""} onChange={(e) => setForm({ ...form, cgpa: parseFloat(e.target.value) })} />
-                </div>
-                <div>
-                  <Label>GitHub URL</Label>
-                  <Input value={form.github_url || ""} onChange={(e) => setForm({ ...form, github_url: e.target.value })} required />
-                </div>
-                <div>
-                  <Label>Best AI Project</Label>
-                  <Textarea value={form.best_ai_project || ""} onChange={(e) => setForm({ ...form, best_ai_project: e.target.value })} rows={3} />
-                </div>
-                <div>
-                  <Label>Research Work</Label>
-                  <Textarea value={form.research_work || ""} onChange={(e) => setForm({ ...form, research_work: e.target.value })} rows={2} />
-                </div>
-                <div>
-                  <Label>Resume URL</Label>
-                  <Input value={form.resume_url || ""} onChange={(e) => setForm({ ...form, resume_url: e.target.value })} required />
-                </div>
-                <Button type="submit" className="w-full" disabled={submitting}>
-                  {submitting ? "Submitting..." : "Submit application"}
+
+                <Button type="submit" className="w-full" disabled={busy}>
+                  {submitting ? "Submitting..." : uploading ? "Processing resume..." : "Submit application"}
                 </Button>
               </form>
             </CardContent>

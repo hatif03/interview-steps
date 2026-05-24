@@ -299,7 +299,7 @@ export default function CandidateDetailPage() {
       {mockInterviews.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle>Mock Interviews</CardTitle>
+            <CardTitle>Automated AI Interviews</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             {mockInterviews.map((iv) => (

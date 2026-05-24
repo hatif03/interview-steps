@@ -2,28 +2,29 @@
 
 import { useEffect, useState } from "react";
 import { useAuth } from "@/lib/auth-context";
-import { api, MockInterview, ScheduledInterview } from "@/lib/api";
+import { api, MockInterview, ScheduledInterview, AssessmentAssignment } from "@/lib/api";
 import { InterviewCard } from "@/components/InterviewCard";
 import { PageSkeleton } from "@/components/loading";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { LinkButton } from "@/components/link-button";
 import { PageHeader } from "@/components/page-header";
-import { Calendar, Video, ExternalLink } from "lucide-react";
+import { Calendar, Video, ExternalLink, FileText, Trophy } from "lucide-react";
 import { StaggerList } from "@/components/motion";
 
 export default function InterviewsPage() {
   const { user } = useAuth();
-  const [mockInterviews, setMockInterviews] = useState<MockInterview[]>([]);
+  const [aiInterviews, setAiInterviews] = useState<MockInterview[]>([]);
+  const [assessments, setAssessments] = useState<AssessmentAssignment[]>([]);
   const [scheduled, setScheduled] = useState<ScheduledInterview[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (!user) return;
     Promise.all([
-      api.getUserMockInterviews(user.id, user.email || undefined).then((r) => setMockInterviews(r.interviews)),
+      api.getUserMockInterviews(user.id, user.email || undefined).then((r) => setAiInterviews(r.interviews)),
+      api.getMyAssessments().then((r) => setAssessments(r.assignments)),
       api.getMyInterviews().then((r) => setScheduled(r.interviews)),
     ])
       .catch(console.error)
@@ -34,20 +35,51 @@ export default function InterviewsPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Interviews" description="Mock interviews and scheduled live sessions" />
+      <PageHeader title="Interviews" description="Platform assessments, automated AI interviews, and live sessions" />
 
-      <Tabs defaultValue="mock">
+      <Tabs defaultValue="assessments">
         <TabsList>
-          <TabsTrigger value="mock"><Video className="h-4 w-4 mr-2" />Mock ({mockInterviews.length})</TabsTrigger>
+          <TabsTrigger value="assessments"><FileText className="h-4 w-4 mr-2" />Assessments ({assessments.length})</TabsTrigger>
+          <TabsTrigger value="ai"><Video className="h-4 w-4 mr-2" />AI Interviews ({aiInterviews.length})</TabsTrigger>
           <TabsTrigger value="live"><Calendar className="h-4 w-4 mr-2" />Live ({scheduled.length})</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="mock" className="mt-4">
-          {mockInterviews.length === 0 ? (
-            <p className="text-sm text-muted-foreground py-8 text-center">No mock interviews assigned yet.</p>
+        <TabsContent value="assessments" className="mt-4">
+          {assessments.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-8 text-center">No platform assessments assigned yet.</p>
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-2">
+              {assessments.map((a) => {
+                const done = a.status === "graded";
+                const href = done ? `/candidate/assessments/${a.id}/results` : `/candidate/assessments/${a.id}`;
+                return (
+                  <Card key={a.id} className="hover:border-primary/50 transition-colors">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-base">{a.job_title || "Assessment"}</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-2">
+                      {a.result && (
+                        <p className="text-sm flex items-center gap-1 text-primary font-medium">
+                          <Trophy className="h-3.5 w-3.5" />{Math.round(a.result.total_score)}/100
+                        </p>
+                      )}
+                      <LinkButton href={href} size="sm" variant={done ? "outline" : "default"}>
+                        {done ? "View Results" : "Take Assessment"}
+                      </LinkButton>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+          )}
+        </TabsContent>
+
+        <TabsContent value="ai" className="mt-4">
+          {aiInterviews.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-8 text-center">No automated AI interviews assigned yet.</p>
           ) : (
             <StaggerList className="grid gap-4 sm:grid-cols-2">
-              {mockInterviews.map((iv) => (
+              {aiInterviews.map((iv) => (
                 <InterviewCard key={iv.id} interview={iv} />
               ))}
             </StaggerList>

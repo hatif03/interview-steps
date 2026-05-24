@@ -41,7 +41,7 @@ export default function TakeInterviewPage() {
           <Badge variant="outline">{interview.level}</Badge>
         </div>
         <p className="text-sm text-muted-foreground">
-          {interview.questions?.length || 0} questions · Click Start and speak clearly when prompted.
+          {interview.questions?.length || 0} questions · Enable camera & microphone, then click Start and speak clearly when prompted.
         </p>
       </div>
 

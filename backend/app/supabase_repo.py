@@ -38,6 +38,10 @@ class QueryResult:
     count: int = 0
 
 
+# Tables that use other timestamp columns (e.g. sent_at) instead of created_at
+_TABLES_WITHOUT_CREATED_AT = frozenset({"email_logs"})
+
+
 class SupabaseRepo:
     """CRUD helper mirroring common Supabase PostgREST patterns."""
 
@@ -48,7 +52,7 @@ class SupabaseRepo:
         doc_id = doc_id or str(uuid.uuid4())
         payload = dict(data)
         payload["id"] = doc_id
-        if "created_at" not in payload:
+        if "created_at" not in payload and collection not in _TABLES_WITHOUT_CREATED_AT:
             payload["created_at"] = _now_iso()
         result = self._table(collection).insert(payload).execute()
         row = _row_to_dict(result.data[0] if result.data else payload)

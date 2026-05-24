@@ -38,6 +38,9 @@ import { PageHeader } from "@/components/page-header";
 import { PageSkeleton } from "@/components/loading";
 import { CopyLinkButton } from "@/components/copy-link-button";
 import { FileDropzone, downloadCsvTemplate } from "@/components/file-dropzone";
+import { WorkflowStepCard } from "@/components/workflow-step-card";
+import { WorkflowRunButton, WorkflowFileUpload } from "@/components/workflow-run-button";
+import { computeWorkflowSteps } from "@/lib/workflow-status";
 import {
   Upload,
   Brain,
@@ -65,8 +68,12 @@ const STAGE_CONFIG: Record<string, { label: string; color: string; icon: typeof 
   test_sent: { label: "Test Sent", color: "bg-cyan-100 text-cyan-700", icon: Send },
   test_completed: { label: "Test Done", color: "bg-teal-100 text-teal-700", icon: CheckCircle2 },
   shortlisted: { label: "Shortlisted", color: "bg-green-100 text-green-700", icon: CheckCircle2 },
-  mock_interview_assigned: { label: "Mock Interview", color: "bg-indigo-100 text-indigo-700", icon: Brain },
-  mock_interview_completed: { label: "Mock Done", color: "bg-violet-100 text-violet-700", icon: CheckCircle2 },
+  mock_interview_assigned: { label: "AI Interview", color: "bg-indigo-100 text-indigo-700", icon: Brain },
+  mock_interview_completed: { label: "AI Interview Done", color: "bg-violet-100 text-violet-700", icon: CheckCircle2 },
+  assessment_assigned: { label: "Assessment Assigned", color: "bg-cyan-100 text-cyan-700", icon: Send },
+  assessment_completed: { label: "Assessment Done", color: "bg-teal-100 text-teal-700", icon: CheckCircle2 },
+  ai_interview_assigned: { label: "AI Interview", color: "bg-indigo-100 text-indigo-700", icon: Brain },
+  ai_interview_completed: { label: "AI Interview Done", color: "bg-violet-100 text-violet-700", icon: CheckCircle2 },
   interview_scheduled: { label: "Interview", color: "bg-emerald-100 text-emerald-700", icon: Calendar },
   error: { label: "Error", color: "bg-red-100 text-red-700", icon: AlertCircle },
 };
@@ -217,6 +224,14 @@ export default function JobDetailPage() {
   const [mockPickerOpen, setMockPickerOpen] = useState(false);
   const [mockSendEmail, setMockSendEmail] = useState(true);
 
+  const [assessmentTopN, setAssessmentTopN] = useState(5);
+  const [assessmentSelectedIds, setAssessmentSelectedIds] = useState<Set<string>>(new Set());
+  const [assessmentPickerOpen, setAssessmentPickerOpen] = useState(false);
+  const [assessmentSendEmail, setAssessmentSendEmail] = useState(true);
+  const [assessmentResults, setAssessmentResults] = useState<Array<{ id: string; candidate?: { name?: string }; result?: { outcome?: string; total_score?: number } }>>([]);
+  const [shortlistedIds, setShortlistedIds] = useState<string[]>([]);
+  const [sendInterviewEmail, setSendInterviewEmail] = useState(true);
+
   const toggleTestCandidate = (id: string) => {
     setTestSelectedIds((prev) => {
       const next = new Set(prev);
@@ -241,15 +256,27 @@ export default function JobDetailPage() {
     });
   };
 
+  const toggleAssessmentCandidate = (id: string) => {
+    setAssessmentSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
   const prevCandidatesRef = useRef<Candidate[]>([]);
 
   const refresh = useCallback(async () => {
     try {
-      const [j, c, p] = await Promise.all([
+      const [j, c, p, ar, sl] = await Promise.all([
         api.getJob(jobId),
         api.listCandidates({ job_id: jobId, limit: 200 }),
         api.getPipelineSummary(jobId),
+        api.getAssessmentResults(jobId).catch(() => ({ results: [] })),
+        api.getAssessmentShortlisted(jobId).catch(() => ({ candidate_ids: [] })),
       ]);
+      setAssessmentResults(ar.results || []);
+      setShortlistedIds(sl.candidate_ids || []);
       setJob(j);
       setPipeline(p);
 
@@ -310,7 +337,7 @@ export default function JobDetailPage() {
     try {
       const result = await api.uploadCandidates(jobId, file);
       toast.success(`Uploaded ${result.count} candidates. Resume processing started.`);
-      loadData();
+      refresh();
     } catch (err) {
       toast.error("Upload failed: " + (err instanceof Error ? err.message : "Unknown error"));
     } finally {
@@ -318,40 +345,8 @@ export default function JobDetailPage() {
     }
   };
 
-  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setActionLoading("upload");
-    try {
-      const result = await api.uploadCandidates(jobId, file);
-      toast.success(`Uploaded ${result.count} candidates. Resume processing started.`);
-      setTimeout(refresh, 2000);
-    } catch (err) {
-      toast.error("Upload failed: " + (err instanceof Error ? err.message : "Unknown error"));
-    } finally {
-      setActionLoading(null);
-      e.target.value = "";
-    }
-  };
-
-  const handleTestUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setActionLoading("test-upload");
-    try {
-      const result = await api.uploadTestResults(jobId, file);
-      toast.success(`Updated test results for ${result.count} candidates.`);
-      setTimeout(refresh, 3000);
-    } catch (err) {
-      toast.error("Upload failed");
-    } finally {
-      setActionLoading(null);
-      e.target.value = "";
-    }
-  };
-
-  const runAction = async (action: string, fn: () => Promise<unknown>) => {
-    setActionLoading(action);
+  const runAction = async (action: string, fn: () => Promise<unknown>, loadingKey?: string) => {
+    setActionLoading(loadingKey ?? action);
     try {
       await fn();
       toast.success(`${action} started!`);
@@ -412,6 +407,13 @@ export default function JobDetailPage() {
     return ra - rb;
   });
 
+  const aiInterviewCandidates = shortlistedIds.length > 0
+    ? rankedCandidates.filter((c) => shortlistedIds.includes(c.id))
+    : rankedCandidates;
+
+  const assessmentAssignedCount = assessmentResults.length;
+  const assessmentGradedCount = assessmentResults.filter((r) => r.status === "graded" || r.result).length;
+
   const applyTestTopN = () => {
     setTestSelectedIds(new Set(rankedCandidates.slice(0, testTopN).map((c) => c.id)));
   };
@@ -424,6 +426,8 @@ export default function JobDetailPage() {
     (c) => c.pipeline_stage === "evaluating" || (c.status_message && c.status_message.includes("Processing"))
   ).length;
   const errorCount = candidates.filter((c) => c.pipeline_stage === "error").length;
+
+  const workflowSteps = computeWorkflowSteps(candidates, pipeline, actionLoading, assessmentAssignedCount, assessmentGradedCount);
 
   return (
     <div className="space-y-6">
@@ -661,110 +665,171 @@ export default function JobDetailPage() {
         {/* Workflow Tab */}
         <TabsContent value="workflow" className="space-y-4">
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base flex items-center gap-2">
-                  <Upload className="h-4 w-4" /> 1. Upload Candidates
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm text-muted-foreground mb-3">Upload a CSV/Excel file with candidate data.</p>
-                <label className="cursor-pointer block">
-                  <input type="file" accept=".csv,.xlsx,.xls" onChange={handleUpload} className="hidden" />
-                  <div className="w-full inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium border border-input bg-background hover:bg-accent hover:text-accent-foreground h-10 px-4 py-2 cursor-pointer">
-                    {actionLoading === "upload" ? <><Loader2 className="h-4 w-4 animate-spin" />Uploading...</> : "Choose File"}
-                  </div>
-                </label>
-              </CardContent>
-            </Card>
+            <WorkflowStepCard
+              title={<><Upload className="h-4 w-4" /> 1. Upload Candidates</>}
+              description="Upload a CSV/Excel file with candidate data."
+              step={workflowSteps.upload}
+            >
+              <WorkflowFileUpload
+                step={workflowSteps.upload}
+                loading={actionLoading === "upload"}
+                label="Choose File"
+                loadingLabel="Uploading..."
+                skipCompletedGuard
+                onFile={handleUploadFile}
+              />
+            </WorkflowStepCard>
 
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base flex items-center gap-2">
-                  <FileText className="h-4 w-4" /> 2. Process Resumes
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm text-muted-foreground mb-3">Download and extract text from candidate resumes.</p>
-                <Button
-                  variant="outline" className="w-full"
-                  disabled={actionLoading === "resumes" || candidates.length === 0}
-                  onClick={() => runAction("Resume processing", () => api.processResumes(jobId))}
-                >
-                  {actionLoading === "resumes" ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
-                  Process Resumes
-                </Button>
-              </CardContent>
-            </Card>
+            <WorkflowStepCard
+              title={<><FileText className="h-4 w-4" /> 2. Process Resumes</>}
+              description="Download and extract text from candidate resumes."
+              step={workflowSteps.process_resumes}
+            >
+              <WorkflowRunButton
+                step={workflowSteps.process_resumes}
+                variant="outline"
+                className="w-full"
+                loading={actionLoading === "resumes"}
+                disabled={candidates.length === 0}
+                label="Process Resumes"
+                rerunLabel="Reprocess all resumes"
+                rerunDescription="All resumes are already processed. Re-running will re-download and re-parse every candidate resume."
+                onRun={() => runAction("Resume processing", () => api.processResumes(jobId), "resumes")}
+              />
+            </WorkflowStepCard>
 
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base flex items-center gap-2">
-                  <Brain className="h-4 w-4" /> 3. AI Evaluation
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm text-muted-foreground mb-3">Run LLM evaluation + GitHub analysis + semantic scoring.</p>
-                <Button
-                  className="w-full"
-                  disabled={actionLoading === "evaluate" || candidates.length === 0}
-                  onClick={() => runAction("AI evaluation", () => api.runEvaluations(jobId))}
-                >
-                  {actionLoading === "evaluate" ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Brain className="h-4 w-4 mr-2" />}
-                  Run AI Evaluation
-                </Button>
-              </CardContent>
-            </Card>
+            <WorkflowStepCard
+              title={<><Brain className="h-4 w-4" /> 3. AI Evaluation</>}
+              description="Run LLM evaluation + GitHub analysis + semantic scoring."
+              step={workflowSteps.ai_evaluation}
+            >
+              <WorkflowRunButton
+                step={workflowSteps.ai_evaluation}
+                className="w-full"
+                loading={actionLoading === "evaluate"}
+                disabled={candidates.length === 0}
+                label="Run AI Evaluation"
+                loadingLabel="Starting..."
+                rerunLabel="Re-run AI evaluation"
+                rerunDescription="All candidates are already evaluated. Re-running will re-evaluate every candidate and overwrite existing scores."
+                onRun={() => runAction("AI evaluation", () => api.runEvaluations(jobId), "evaluate")}
+              />
+            </WorkflowStepCard>
 
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base flex items-center gap-2">
-                  <Trophy className="h-4 w-4" /> 4. Rank Candidates
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm text-muted-foreground mb-3">Compute composite scores and rank candidates.</p>
-                <Button
-                  variant="outline" className="w-full"
-                  disabled={actionLoading === "rank" || candidates.length === 0}
-                  onClick={() => runAction("Ranking", () => api.rankCandidates(jobId))}
-                >
-                  {actionLoading === "rank" ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
-                  Compute Rankings
-                </Button>
-              </CardContent>
-            </Card>
+            <WorkflowStepCard
+              title={<><Trophy className="h-4 w-4" /> 4. Rank Candidates</>}
+              description="Compute composite scores and rank candidates."
+              step={workflowSteps.rank}
+            >
+              <WorkflowRunButton
+                step={workflowSteps.rank}
+                variant="outline"
+                className="w-full"
+                loading={actionLoading === "rank"}
+                disabled={candidates.length === 0}
+                label="Compute Rankings"
+                rerunLabel="Recompute rankings"
+                rerunDescription="Rankings are already computed. Re-running will recalculate composite scores for all candidates."
+                onRun={() => runAction("Ranking", () => api.rankCandidates(jobId), "rank")}
+              />
+            </WorkflowStepCard>
 
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base flex items-center gap-2">
-                  <Brain className="h-4 w-4" /> 4b. Assign Mock Interview
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <p className="text-sm text-muted-foreground">Generate personalized AI voice mock interviews from resume + job data.</p>
-                <CandidatePicker
-                  candidates={rankedCandidates}
-                  selectedIds={mockSelectedIds}
-                  onToggle={toggleMockCandidate}
-                  topN={mockTopN}
-                  onSetTopN={setMockTopN}
-                  onApplyTopN={() => {
-                    const top = rankedCandidates.slice(0, mockTopN);
-                    setMockSelectedIds(new Set(top.map((c) => c.id)));
-                  }}
-                  open={mockPickerOpen}
-                  onToggleOpen={() => setMockPickerOpen(!mockPickerOpen)}
-                />
-                <label className="flex items-center gap-2 text-sm">
-                  <Checkbox checked={mockSendEmail} onCheckedChange={(v) => setMockSendEmail(!!v)} />
-                  Send email invite to candidate portal
-                </label>
-                <Button
-                  variant="outline"
-                  className="w-full"
-                  disabled={mockSelectedIds.size === 0 || actionLoading === "Assigning mock interviews"}
-                  onClick={() => runAction("Assigning mock interviews", () =>
+            <WorkflowStepCard
+              title={<><Send className="h-4 w-4" /> 5. Platform Assessment</>}
+              description="Create on-platform test (MCQ, DSA, SQL) and assign to ranked candidates."
+              step={workflowSteps.platform_assessment}
+            >
+              <Button variant="outline" size="sm" className="w-full" asChild>
+                <Link href={`/jobs/${jobId}/assessment`}>Create / Edit Assessment</Link>
+              </Button>
+              <CandidatePicker
+                candidates={rankedCandidates}
+                selectedIds={assessmentSelectedIds}
+                onToggle={toggleAssessmentCandidate}
+                topN={assessmentTopN}
+                onSetTopN={setAssessmentTopN}
+                onApplyTopN={() => setAssessmentSelectedIds(new Set(rankedCandidates.slice(0, assessmentTopN).map((c) => c.id)))}
+                open={assessmentPickerOpen}
+                onToggleOpen={() => setAssessmentPickerOpen(!assessmentPickerOpen)}
+              />
+              <label className="flex items-center gap-2 text-sm">
+                <Checkbox checked={assessmentSendEmail} onCheckedChange={(v) => setAssessmentSendEmail(!!v)} />
+                Send email invite to candidates
+              </label>
+              <WorkflowRunButton
+                step={workflowSteps.platform_assessment}
+                variant="outline"
+                className="w-full"
+                loading={actionLoading === "Assigning assessment"}
+                disabled={assessmentSelectedIds.size === 0}
+                skipCompletedGuard
+                label={`Assign to ${assessmentSelectedIds.size} Candidate${assessmentSelectedIds.size !== 1 ? "s" : ""}`}
+                onRun={() =>
+                  runAction("Assigning assessment", () =>
+                    api.assignAssessment({
+                      job_id: jobId,
+                      candidate_ids: [...assessmentSelectedIds],
+                      send_email: assessmentSendEmail,
+                    })
+                  )
+                }
+              />
+              {assessmentResults.filter((r) => r.result && r.result.outcome === "pending").length > 0 && (
+                <div className="mt-3 space-y-2 border-t pt-3">
+                  <p className="text-xs font-medium">Review & shortlist graded assessments</p>
+                  {assessmentResults.filter((r) => r.result?.outcome === "pending").map((r) => (
+                    <div key={r.id} className="flex items-center justify-between text-xs gap-2">
+                      <span>{r.candidate?.name} — {Math.round(r.result?.total_score || 0)}/100</span>
+                      <div className="flex gap-1">
+                        <Button size="sm" variant="outline" className="h-7 text-[10px]" onClick={async () => {
+                          await api.shortlistAssessment({ job_id: jobId, outcomes: { [r.id]: "shortlisted" }, send_email: true });
+                          toast.success("Shortlisted");
+                          refresh();
+                        }}>Shortlist</Button>
+                        <Button size="sm" variant="ghost" className="h-7 text-[10px]" onClick={async () => {
+                          await api.shortlistAssessment({ job_id: jobId, outcomes: { [r.id]: "not_shortlisted" }, send_email: false });
+                          toast.success("Marked not shortlisted");
+                          refresh();
+                        }}>Reject</Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </WorkflowStepCard>
+
+            <WorkflowStepCard
+              title={<><Brain className="h-4 w-4" /> 6. Assign Automated AI Interview</>}
+              description="Voice AI interview for candidates shortlisted from platform assessment."
+              step={workflowSteps.ai_interview}
+            >
+              <CandidatePicker
+                candidates={aiInterviewCandidates}
+                selectedIds={mockSelectedIds}
+                onToggle={toggleMockCandidate}
+                topN={mockTopN}
+                onSetTopN={setMockTopN}
+                onApplyTopN={() => {
+                  const top = aiInterviewCandidates.slice(0, mockTopN);
+                  setMockSelectedIds(new Set(top.map((c) => c.id)));
+                }}
+                open={mockPickerOpen}
+                onToggleOpen={() => setMockPickerOpen(!mockPickerOpen)}
+              />
+              <label className="flex items-center gap-2 text-sm">
+                <Checkbox checked={mockSendEmail} onCheckedChange={(v) => setMockSendEmail(!!v)} />
+                Send email invite to candidate portal
+              </label>
+              <WorkflowRunButton
+                step={workflowSteps.ai_interview}
+                variant="outline"
+                className="w-full"
+                loading={actionLoading === "Assigning AI interviews"}
+                disabled={mockSelectedIds.size === 0}
+                skipCompletedGuard
+                label={`Assign to ${mockSelectedIds.size} Candidate${mockSelectedIds.size !== 1 ? "s" : ""}`}
+                onRun={() =>
+                  runAction("Assigning AI interviews", () =>
                     api.assignMockInterview({
                       job_id: jobId,
                       candidate_ids: [...mockSelectedIds],
@@ -772,109 +837,133 @@ export default function JobDetailPage() {
                       question_count: 5,
                       send_email: mockSendEmail,
                     })
-                  )}
-                >
-                  Assign to {mockSelectedIds.size} Candidate{mockSelectedIds.size !== 1 ? "s" : ""}
-                </Button>
-              </CardContent>
-            </Card>
+                  )
+                }
+              />
+            </WorkflowStepCard>
 
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base flex items-center gap-2">
-                  <Send className="h-4 w-4" /> 5. Send Test Links
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div>
-                  <Label className="text-xs">Test Link URL</Label>
-                  <Input placeholder="https://..." value={testLink} onChange={(e) => setTestLink(e.target.value)} />
-                </div>
-                <CandidatePicker
-                  candidates={rankedCandidates}
-                  selectedIds={testSelectedIds}
-                  onToggle={toggleTestCandidate}
-                  topN={testTopN}
-                  onSetTopN={setTestTopN}
-                  onApplyTopN={applyTestTopN}
-                  open={testPickerOpen}
-                  onToggleOpen={() => setTestPickerOpen(!testPickerOpen)}
-                />
-                <Button
-                  variant="outline" className="w-full"
-                  disabled={!testLink || testSelectedIds.size === 0}
-                  onClick={() => runAction("Sending test emails", () =>
+            <WorkflowStepCard
+              title={<><Send className="h-4 w-4" /> 5b. Send External Test Links (Legacy)</>}
+              description="Optional fallback: email external assessment links."
+              step={workflowSteps.test_emails}
+            >
+              <div>
+                <Label className="text-xs">Test Link URL</Label>
+                <Input placeholder="https://..." value={testLink} onChange={(e) => setTestLink(e.target.value)} />
+              </div>
+              <CandidatePicker
+                candidates={rankedCandidates}
+                selectedIds={testSelectedIds}
+                onToggle={toggleTestCandidate}
+                topN={testTopN}
+                onSetTopN={setTestTopN}
+                onApplyTopN={applyTestTopN}
+                open={testPickerOpen}
+                onToggleOpen={() => setTestPickerOpen(!testPickerOpen)}
+              />
+              <WorkflowRunButton
+                step={workflowSteps.test_emails}
+                variant="outline"
+                className="w-full"
+                loading={actionLoading === "Sending test emails"}
+                disabled={!testLink || testSelectedIds.size === 0}
+                skipCompletedGuard
+                label={`Send to ${testSelectedIds.size} Candidate${testSelectedIds.size !== 1 ? "s" : ""}`}
+                onRun={() =>
+                  runAction("Sending test emails", () =>
                     api.sendTestEmails({
                       job_id: jobId,
                       candidate_ids: [...testSelectedIds],
                       test_link: testLink,
                     })
-                  )}
-                >
-                  Send to {testSelectedIds.size} Candidate{testSelectedIds.size !== 1 ? "s" : ""}
-                </Button>
-              </CardContent>
-            </Card>
+                  )
+                }
+              />
+            </WorkflowStepCard>
 
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base flex items-center gap-2">
-                  <FileText className="h-4 w-4" /> 6. Upload Test Results
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm text-muted-foreground mb-3">Upload CSV/Excel with test_la and test_code scores.</p>
-                <label className="cursor-pointer block">
-                  <input type="file" accept=".csv,.xlsx,.xls" onChange={handleTestUpload} className="hidden" />
-                  <div className="w-full inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium border border-input bg-background hover:bg-accent hover:text-accent-foreground h-10 px-4 py-2 cursor-pointer">
-                    {actionLoading === "test-upload" ? <><Loader2 className="h-4 w-4 animate-spin" />Uploading...</> : "Upload Test Results"}
-                  </div>
-                </label>
-              </CardContent>
-            </Card>
+            <WorkflowStepCard
+              title={<><FileText className="h-4 w-4" /> 6b. Upload Legacy Test Results</>}
+              description="Optional fallback: upload CSV/Excel with test_la and test_code scores."
+              step={workflowSteps.test_results}
+            >
+              <WorkflowFileUpload
+                step={workflowSteps.test_results}
+                loading={actionLoading === "test-upload"}
+                label="Upload Test Results"
+                loadingLabel="Uploading..."
+                skipCompletedGuard
+                onFile={async (file) => {
+                  setActionLoading("test-upload");
+                  try {
+                    const result = await api.uploadTestResults(jobId, file);
+                    toast.success(`Updated test results for ${result.count} candidates.`);
+                    setTimeout(refresh, 3000);
+                  } catch {
+                    toast.error("Upload failed");
+                  } finally {
+                    setActionLoading(null);
+                  }
+                }}
+              />
+            </WorkflowStepCard>
 
-            <Card className="md:col-span-2 lg:col-span-1">
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base flex items-center gap-2">
-                  <Calendar className="h-4 w-4" /> 7. Schedule Interviews
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div>
-                  <Label className="text-xs">Interviewer Email</Label>
-                  <Input placeholder="interviewer@company.com" value={interviewerEmail} onChange={(e) => setInterviewerEmail(e.target.value)} />
-                </div>
-                <div>
-                  <Label className="text-xs">Start Date</Label>
-                  <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
-                </div>
-                <CandidatePicker
-                  candidates={rankedCandidates}
-                  selectedIds={interviewSelectedIds}
-                  onToggle={toggleInterviewCandidate}
-                  topN={interviewTopN}
-                  onSetTopN={setInterviewTopN}
-                  onApplyTopN={applyInterviewTopN}
-                  open={interviewPickerOpen}
-                  onToggleOpen={() => setInterviewPickerOpen(!interviewPickerOpen)}
-                />
-                <Button
-                  className="w-full"
-                  disabled={!interviewerEmail || !startDate || interviewSelectedIds.size === 0}
-                  onClick={() => runAction("Scheduling interviews", () =>
-                    api.scheduleInterviews({
+            <WorkflowStepCard
+              title={<><Calendar className="h-4 w-4" /> 7. Schedule Live Interviews</>}
+              description="Book live interviews with AI-interview shortlisted candidates."
+              step={workflowSteps.schedule_interviews}
+              className="md:col-span-2 lg:col-span-1"
+            >
+              <div>
+                <Label className="text-xs">Interviewer Email</Label>
+                <Input placeholder="interviewer@company.com" value={interviewerEmail} onChange={(e) => setInterviewerEmail(e.target.value)} />
+              </div>
+              <div>
+                <Label className="text-xs">Start Date</Label>
+                <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+              </div>
+              <CandidatePicker
+                candidates={aiInterviewCandidates.length > 0 ? aiInterviewCandidates : rankedCandidates}
+                selectedIds={interviewSelectedIds}
+                onToggle={toggleInterviewCandidate}
+                topN={interviewTopN}
+                onSetTopN={setInterviewTopN}
+                onApplyTopN={applyInterviewTopN}
+                open={interviewPickerOpen}
+                onToggleOpen={() => setInterviewPickerOpen(!interviewPickerOpen)}
+              />
+              <label className="flex items-center gap-2 text-sm">
+                <Checkbox checked={sendInterviewEmail} onCheckedChange={(v) => setSendInterviewEmail(!!v)} />
+                Send interview invitation emails after scheduling
+              </label>
+              <WorkflowRunButton
+                step={workflowSteps.schedule_interviews}
+                className="w-full"
+                loading={actionLoading === "Scheduling interviews"}
+                disabled={!interviewerEmail || !startDate || interviewSelectedIds.size === 0}
+                skipCompletedGuard
+                label={`Schedule ${interviewSelectedIds.size} Interview${interviewSelectedIds.size !== 1 ? "s" : ""}`}
+                onRun={async () => {
+                  setActionLoading("Scheduling interviews");
+                  try {
+                    await api.scheduleInterviews({
                       job_id: jobId,
                       candidate_ids: [...interviewSelectedIds],
                       interviewer_email: interviewerEmail,
                       start_date: startDate,
-                    })
-                  )}
-                >
-                  <Calendar className="h-4 w-4 mr-2" />
-                  Schedule {interviewSelectedIds.size} Interview{interviewSelectedIds.size !== 1 ? "s" : ""}
-                </Button>
-              </CardContent>
-            </Card>
+                    });
+                    if (sendInterviewEmail) {
+                      await api.sendInterviewEmails(jobId, [...interviewSelectedIds]);
+                    }
+                    toast.success("Interviews scheduled!");
+                    setTimeout(refresh, 3000);
+                  } catch (err) {
+                    toast.error(`Failed: ${err instanceof Error ? err.message : "Unknown error"}`);
+                  } finally {
+                    setActionLoading(null);
+                  }
+                }}
+              />
+            </WorkflowStepCard>
           </div>
         </TabsContent>
 

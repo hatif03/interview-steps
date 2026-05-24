@@ -20,7 +20,7 @@ import { APP_NAME } from "@/lib/app-config";
 
 export const metadata: Metadata = {
   title: APP_NAME,
-  description: "Candidate screening, pipeline management, and mock interviews",
+  description: "Candidate screening, pipeline management, and automated AI interviews",
 };
 
 export default function RootLayout({

@@ -79,9 +79,7 @@ async function ensureBackendUser(user: User, token: string): Promise<AppUser> {
   }
 }
 
-async function loadProfile(user: User): Promise<AppUser | null> {
-  const { data: sessionData } = await supabase.auth.getSession();
-  const token = sessionData.session?.access_token;
+async function loadProfile(user: User, token: string | null): Promise<AppUser | null> {
   if (!token) return profileFromUser(user);
   return ensureBackendUser(user, token);
 }
@@ -91,6 +89,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [profile, setProfile] = useState<AppUser | null>(null);
   const [loading, setLoading] = useState(true);
   const userIdRef = useRef<string | null>(null);
+  const sessionRef = useRef<Session | null>(null);
+
+  const syncSession = useCallback((session: Session | null) => {
+    sessionRef.current = session;
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -98,12 +101,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const init = async () => {
       try {
         const { data: { session } } = await supabase.auth.getSession();
-        const u = session?.user ?? null;
         if (!mounted) return;
+        syncSession(session);
+        const u = session?.user ?? null;
         setUser(u);
         userIdRef.current = u?.id ?? null;
         if (u) {
-          setProfile(await loadProfile(u));
+          setProfile(await loadProfile(u, session?.access_token ?? null));
         }
       } finally {
         if (mounted) setLoading(false);
@@ -115,12 +119,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (event, session: Session | null) => {
+      syncSession(session);
       const u = session?.user ?? null;
       if (!mounted) return;
       setUser(u);
       if (u) {
         if (event === "SIGNED_IN" || event === "USER_UPDATED" || u.id !== userIdRef.current) {
-          setProfile(await loadProfile(u));
+          setProfile(await loadProfile(u, session?.access_token ?? null));
         }
         userIdRef.current = u.id;
       } else {
@@ -134,12 +139,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       mounted = false;
       subscription.unsubscribe();
     };
-  }, []);
+  }, [syncSession]);
 
   const signIn = async (email: string, password: string) => {
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) throw error;
     if (data.user && data.session?.access_token) {
+      syncSession(data.session);
       setProfile(await ensureBackendUser(data.user, data.session.access_token));
     }
   };
@@ -176,29 +182,45 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw new EmailConfirmationRequiredError();
     }
 
+    syncSession(data.session);
     setProfile(await api.getMe(data.session.access_token));
   };
 
   const signOut = async () => {
     if (userIdRef.current) clearOnboardingCache(userIdRef.current);
+    sessionRef.current = null;
     await supabase.auth.signOut();
   };
 
   const getIdToken = useCallback(async () => {
-    const { data: sessionData } = await supabase.auth.getSession();
+    const cached = sessionRef.current?.access_token;
+    if (cached) return cached;
+
+    const { data: sessionData } = await withTimeout(supabase.auth.getSession(), 5000);
+    syncSession(sessionData.session);
     return sessionData.session?.access_token ?? null;
-  }, []);
+  }, [syncSession]);
 
   useEffect(() => {
     setAuthTokenProvider(getIdToken);
   }, [getIdToken]);
 
   const refreshProfile = useCallback(async () => {
-    const { data: sessionData } = await supabase.auth.getSession();
-    const u = sessionData.session?.user;
-    const token = sessionData.session?.access_token;
-    if (u && token) setProfile(await ensureBackendUser(u, token));
-  }, []);
+    const session = sessionRef.current;
+    const u = session?.user;
+    const token = session?.access_token;
+    if (u && token) {
+      setProfile(await ensureBackendUser(u, token));
+      return;
+    }
+    const { data: sessionData } = await withTimeout(supabase.auth.getSession(), 5000);
+    syncSession(sessionData.session);
+    const refreshedUser = sessionData.session?.user;
+    const refreshedToken = sessionData.session?.access_token;
+    if (refreshedUser && refreshedToken) {
+      setProfile(await ensureBackendUser(refreshedUser, refreshedToken));
+    }
+  }, [syncSession]);
 
   return (
     <AuthContext.Provider

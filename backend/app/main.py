@@ -4,7 +4,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
-from app.api import jobs, candidates, evaluations, tests, interviews, mock_interviews, auth, public, candidate_portal
+from app.api import jobs, candidates, evaluations, tests, interviews, mock_interviews, auth, public, candidate_portal, assessments
 
 
 class _SuppressReloadNoise(logging.Filter):
@@ -21,7 +21,7 @@ for _logger_name in ("uvicorn.error", "uvicorn"):
 
 app = FastAPI(
     title="Interview Steps",
-    description="Candidate screening, pipeline management, and mock interviews",
+    description="Candidate screening, pipeline management, and automated AI interviews",
     version="2.0.0",
 )
 
@@ -38,7 +38,8 @@ app.include_router(candidates.router, prefix="/api/candidates", tags=["Candidate
 app.include_router(evaluations.router, prefix="/api/evaluations", tags=["Evaluations"])
 app.include_router(tests.router, prefix="/api/tests", tags=["Tests"])
 app.include_router(interviews.router, prefix="/api/interviews", tags=["Interviews"])
-app.include_router(mock_interviews.router, prefix="/api/mock-interviews", tags=["Mock Interviews"])
+app.include_router(mock_interviews.router, prefix="/api/mock-interviews", tags=["AI Interviews"])
+app.include_router(assessments.router, prefix="/api/assessments", tags=["Assessments"])
 app.include_router(auth.router, prefix="/api/auth", tags=["Auth"])
 app.include_router(public.router, prefix="/api/public", tags=["Public"])
 app.include_router(candidate_portal.router, prefix="/api/candidate", tags=["Candidate Portal"])

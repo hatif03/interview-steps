@@ -15,7 +15,7 @@ import { authErrorMessage } from "@/lib/auth-errors";
 const FEATURES = [
   "Apply to roles with one click",
   "Track application status in real time",
-  "Practice with AI mock interviews",
+  "Practice with automated AI interviews",
 ];
 
 function SignInForm() {
@@ -87,7 +87,7 @@ export default function CandidateSignInPage() {
     <AuthLayout
       variant="candidate"
       title="Track your career"
-      subtitle="Apply to roles, track progress, and ace mock interviews."
+      subtitle="Apply to roles, track progress, and take AI interviews."
       features={FEATURES}
     >
       <Suspense fallback={<div className="animate-pulse text-muted-foreground">Loading...</div>}>

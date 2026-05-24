@@ -8,16 +8,17 @@ from datetime import datetime, timezone
 from app.core.llm import llm_completion, llm_json_completion
 from app.supabase_repo import get_db
 from app.services.email_service import send_mock_interview_invites
+from app.services.hiring_rounds_service import complete_round, create_round
 
-INTERVIEWER_SYSTEM = """You are a professional technical interviewer conducting a voice mock interview.
+INTERVIEWER_SYSTEM = """You are a professional technical interviewer conducting an automated AI voice interview.
 Ask one question at a time. Keep responses concise (2-4 sentences) since they will be read aloud.
 Use follow-up questions when answers are vague. Be encouraging but thorough.
 When all planned questions are covered, thank the candidate and say the interview is complete."""
 
-FEEDBACK_SYSTEM = """You are a professional interviewer analyzing a mock interview transcript.
+FEEDBACK_SYSTEM = """You are a professional interviewer analyzing an automated AI interview transcript.
 Evaluate the candidate thoroughly. Do not be lenient — point out mistakes and areas for improvement."""
 
-FEEDBACK_PROMPT = """Analyze this mock interview transcript and return JSON with this exact structure:
+FEEDBACK_PROMPT = """Analyze this automated AI interview transcript and return JSON with this exact structure:
 {{
   "totalScore": <0-100 integer>,
   "categoryScores": [
@@ -60,7 +61,7 @@ async def generate_questions(
         if concerns:
             eval_context = f"Prior screening concerns to probe: {', '.join(concerns)}"
 
-    prompt = f"""Generate {question_count} interview questions for a personalized mock interview.
+    prompt = f"""Generate {question_count} interview questions for a personalized automated AI interview.
 
 Job title: {job['title']}
 Job description: {job['description'][:2000]}
@@ -116,9 +117,16 @@ async def assign_mock_interviews(
         interview = await generate_questions(job_id, cid, interview_type, question_count)
         created.append(interview)
         interview_ids[cid] = interview["id"]
+        create_round(
+            candidate_id=cid,
+            job_id=job_id,
+            round_type="ai_interview",
+            reference_id=interview["id"],
+            status="pending",
+        )
         db.update("candidates", cid, {
-            "pipeline_stage": "mock_interview_assigned",
-            "status_message": "Mock interview assigned — check your email for portal link",
+            "pipeline_stage": "ai_interview_assigned",
+            "status_message": "Automated AI interview assigned — check your candidate portal",
         })
 
     if send_email:
@@ -135,7 +143,7 @@ async def start_session(mock_interview_id: str, user_id: str | None = None) -> d
 
     mi = interview.data[0]
     questions = mi.get("questions", [])
-    opening = f"Hello! Welcome to your mock interview for the {mi.get('role', 'position')} role. Let's begin."
+    opening = f"Hello! Welcome to your automated AI interview for the {mi.get('role', 'position')} role. Let's begin."
 
     session_data = {
         "mock_interview_id": mock_interview_id,
@@ -272,11 +280,24 @@ async def generate_feedback(session_id: str, feedback_id: str | None = None) -> 
         fid = inserted.data[0]["id"]
 
     candidate_id = session.get("candidate_id")
+    interview_id = session.get("mock_interview_id")
     if candidate_id:
         db.update("candidates", candidate_id, {
-            "pipeline_stage": "mock_interview_completed",
-            "status_message": f"Mock interview complete — score: {feedback_data['total_score']}/100",
+            "pipeline_stage": "ai_interview_completed",
+            "status_message": f"AI interview complete — score: {feedback_data['total_score']}/100",
         })
+
+    if interview_id:
+        complete_round(
+            interview_id,
+            round_type="ai_interview",
+            total_score=feedback_data["total_score"],
+            review_summary={
+                "strengths": feedback_data.get("strengths", []),
+                "areas_for_improvement": feedback_data.get("areas_for_improvement", []),
+                "final_assessment": feedback_data.get("final_assessment", ""),
+            },
+        )
 
     return {"success": True, "feedbackId": fid, **feedback_data}
 

@@ -24,8 +24,10 @@ const STAGE_PROGRESS: Record<string, number> = {
   test_sent: 65,
   test_completed: 75,
   shortlisted: 85,
-  mock_interview_assigned: 88,
-  mock_interview_completed: 92,
+  assessment_assigned: 62, assessment_completed: 70,
+  ai_interview_assigned: 85, ai_interview_completed: 90,
+  mock_interview_assigned: 85,
+  mock_interview_completed: 90,
   interview_scheduled: 100,
   error: 0,
 };
@@ -66,7 +68,7 @@ export default function CandidateDashboardPage() {
 
       <StaggerList className="grid gap-4 sm:grid-cols-3">
         <StatCard title="Applications" value={applications.length} icon={FileText} />
-        <StatCard title="Mock Interviews" value={pendingInterviews.length} icon={Video} description="Pending" />
+        <StatCard title="AI Interviews" value={pendingInterviews.length} icon={Video} description="Pending" />
         <StatCard title="Profile" value="Active" icon={User} description="Complete" />
       </StaggerList>
 
@@ -107,9 +109,9 @@ export default function CandidateDashboardPage() {
         </Section>
       )}
 
-      <Section title="Mock Interviews">
+      <Section title="Automated AI Interviews">
         {interviews.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No mock interviews assigned yet.</p>
+          <p className="text-sm text-muted-foreground">No AI interviews assigned yet.</p>
         ) : (
           <div className="grid gap-4 sm:grid-cols-2">
             {interviews.map((iv) => (

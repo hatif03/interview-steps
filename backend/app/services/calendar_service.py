@@ -6,6 +6,7 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from app.config import settings
 from app.supabase_repo import get_db
+from app.services.hiring_rounds_service import create_round
 
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
 logger = logging.getLogger(__name__)
@@ -86,7 +87,7 @@ async def schedule_interviews(
             except Exception as e:
                 logger.warning(f"Calendar event creation failed for {candidate['name']}: {e}")
 
-        db.insert("scheduled_interviews", {
+        inserted = db.insert("scheduled_interviews", {
             "candidate_id": cid,
             "job_id": job_id,
             "scheduled_at": start_time.isoformat(),
@@ -95,5 +96,14 @@ async def schedule_interviews(
             "calendar_event_id": calendar_event_id,
             "status": status,
         })
+        interview_id = inserted.data[0]["id"] if inserted.data else None
+        if interview_id:
+            create_round(
+                candidate_id=cid,
+                job_id=job_id,
+                round_type="live_interview",
+                reference_id=interview_id,
+                status="pending",
+            )
         db.update("candidates", cid, {"pipeline_stage": "interview_scheduled"})
         logger.info(f"Interview scheduled for {candidate['name']} at {start_time.isoformat()}")
