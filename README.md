@@ -36,7 +36,7 @@ Beyond the core mock interview scope, the platform also includes a full recruite
 
 ## Demo Video Link
 
-> **Demo Video:** _Coming soon — add YouTube or Google Drive link here._
+**Demo Video:** [https://youtu.be/vBnSWLke95I](https://youtu.be/vBnSWLke95I)
 
 ---
 
