@@ -3,108 +3,109 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { api, Job } from "@/lib/api";
+import { useAuth } from "@/lib/auth-context";
+import { isRecruiter } from "@/lib/auth-utils";
+import { StatCard } from "@/components/stat-card";
+import { StaggerList } from "@/components/motion";
+import { EmptyState } from "@/components/empty-state";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { StatsSkeleton, CardSkeleton } from "@/components/loading";
-import { Briefcase, Users, CheckCircle, Calendar } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { LinkButton } from "@/components/link-button";
+import { StatsSkeleton } from "@/components/loading";
+import { PageHeader } from "@/components/page-header";
+import { Section } from "@/components/section";
+import { Briefcase, Users, GitGraph, Plus, ArrowRight } from "lucide-react";
 
 export default function DashboardPage() {
+  const { profile, user, loading: authLoading } = useAuth();
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    if (authLoading || !isRecruiter(profile, user)) {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
     api.listJobs().then(setJobs).catch(console.error).finally(() => setLoading(false));
-  }, []);
+  }, [authLoading, profile, user]);
 
   const totalCandidates = jobs.reduce((s, j) => s + (j.candidate_count || 0), 0);
+  const openJobs = jobs.filter((j) => j.status === "open").length;
 
   if (loading) {
     return (
       <div className="space-y-8">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
-          <p className="text-muted-foreground mt-1">AI-powered candidate screening overview</p>
-        </div>
+        <PageHeader title="Dashboard" description="AI-powered candidate screening overview" />
         <StatsSkeleton />
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {Array.from({ length: 3 }).map((_, i) => <CardSkeleton key={i} />)}
-        </div>
       </div>
     );
   }
 
   return (
     <div className="space-y-8">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
-        <p className="text-muted-foreground mt-1">AI-powered candidate screening overview</p>
-      </div>
+      <PageHeader
+        title="Dashboard"
+        description="AI-powered candidate screening overview"
+        actions={
+          <LinkButton href="/jobs/new">
+            <Plus className="h-4 w-4 mr-2" />
+            Create job
+          </LinkButton>
+        }
+      />
 
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+      <StaggerList className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <StatCard title="Total Jobs" value={jobs.length} icon={Briefcase} />
+        <StatCard title="Open Roles" value={openJobs} icon={Briefcase} description="Accepting applications" />
+        <StatCard title="Total Candidates" value={totalCandidates} icon={Users} />
+        <StatCard title="Active Pipelines" value={jobs.filter((j) => (j.candidate_count || 0) > 0).length} icon={GitGraph} />
+      </StaggerList>
+
+      <Section title="Recent Jobs" actions={<LinkButton variant="ghost" size="sm" href="/jobs">View all <ArrowRight className="h-4 w-4 ml-1" /></LinkButton>}>
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Total Jobs</CardTitle>
-            <Briefcase className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent><div className="text-2xl font-bold">{jobs.length}</div></CardContent>
+          <CardContent className="pt-6">
+            {jobs.length === 0 ? (
+              <EmptyState
+                icon={Briefcase}
+                title="No jobs yet"
+                description="Create your first job to start screening candidates with AI."
+                actionLabel="Create job"
+                href="/jobs/new"
+              />
+            ) : (
+              <div className="space-y-3">
+                {jobs.slice(0, 5).map((job) => (
+                  <Link
+                    key={job.id}
+                    href={`/jobs/${job.id}`}
+                    className="flex items-center justify-between p-4 rounded-lg border hover:bg-accent/50 transition-colors"
+                  >
+                    <div>
+                      <h3 className="font-semibold">{job.title}</h3>
+                      <p className="text-sm text-muted-foreground line-clamp-1">{job.description.slice(0, 80)}...</p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <Badge variant={job.status === "open" ? "default" : "secondary"}>
+                        {job.status === "open" ? "Open" : job.status === "closed" ? "Closed" : "Draft"}
+                      </Badge>
+                      <Badge variant="outline">{job.candidate_count || 0}</Badge>
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            )}
+          </CardContent>
         </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Total Candidates</CardTitle>
-            <Users className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent><div className="text-2xl font-bold">{totalCandidates}</div></CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Active Pipelines</CardTitle>
-            <CheckCircle className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent><div className="text-2xl font-bold">{jobs.length}</div></CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Interviews</CardTitle>
-            <Calendar className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent><div className="text-2xl font-bold">--</div></CardContent>
-        </Card>
-      </div>
+      </Section>
 
       <Card>
-        <CardHeader><CardTitle>Recent Jobs</CardTitle></CardHeader>
-        <CardContent>
-          {jobs.length === 0 ? (
-            <div className="text-center py-8">
-              <p className="text-muted-foreground">No jobs created yet.</p>
-              <Link href="/jobs/new" className="text-sm text-primary underline mt-2 inline-block">
-                Create your first job
-              </Link>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {jobs.map((job) => (
-                <Link
-                  key={job.id}
-                  href={`/jobs/${job.id}`}
-                  className="flex items-center justify-between p-4 rounded-lg border hover:bg-accent/50 transition-colors"
-                >
-                  <div>
-                    <h3 className="font-semibold">{job.title}</h3>
-                    <p className="text-sm text-muted-foreground line-clamp-1">
-                      {job.description.slice(0, 100)}...
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <Badge variant="secondary">{job.candidate_count || 0} candidates</Badge>
-                    <span className="text-xs text-muted-foreground">
-                      {new Date(job.created_at).toLocaleDateString()}
-                    </span>
-                  </div>
-                </Link>
-              ))}
-            </div>
-          )}
+        <CardHeader><CardTitle>Quick Actions</CardTitle></CardHeader>
+        <CardContent className="space-y-2">
+          <LinkButton variant="outline" className="w-full justify-start" href="/jobs/new"><Plus className="h-4 w-4 mr-2" />Create new job</LinkButton>
+          <LinkButton variant="outline" className="w-full justify-start" href="/pipeline"><GitGraph className="h-4 w-4 mr-2" />View pipeline</LinkButton>
+          <LinkButton variant="outline" className="w-full justify-start" href="/candidates"><Users className="h-4 w-4 mr-2" />All candidates</LinkButton>
         </CardContent>
       </Card>
     </div>

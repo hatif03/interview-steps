@@ -20,20 +20,32 @@ def extract_gdrive_file_id(url: str) -> str | None:
 
 async def download_resume_pdf(url: str) -> bytes | None:
     file_id = extract_gdrive_file_id(url)
-    if not file_id:
+    if file_id:
+        download_url = f"https://drive.google.com/uc?export=download&id={file_id}"
+        async with httpx.AsyncClient(follow_redirects=True, timeout=30.0) as client:
+            response = await client.get(download_url)
+            if response.status_code == 200 and len(response.content) > 100:
+                return response.content
+
+            confirm_url = f"https://drive.google.com/uc?export=download&confirm=t&id={file_id}"
+            response = await client.get(confirm_url)
+            if response.status_code == 200:
+                return response.content
         return None
 
-    download_url = f"https://drive.google.com/uc?export=download&id={file_id}"
-    async with httpx.AsyncClient(follow_redirects=True, timeout=30.0) as client:
-        response = await client.get(download_url)
-        if response.status_code == 200 and len(response.content) > 100:
-            return response.content
+    if url.startswith("http://") or url.startswith("https://"):
+        async with httpx.AsyncClient(follow_redirects=True, timeout=30.0) as client:
+            response = await client.get(url)
+            if response.status_code == 200 and len(response.content) > 100:
+                return response.content
+    return None
 
-        confirm_url = f"https://drive.google.com/uc?export=download&confirm=t&id={file_id}"
-        response = await client.get(confirm_url)
-        if response.status_code == 200:
-            return response.content
 
+async def get_resume_pdf_bytes(*, url: str | None = None, file_bytes: bytes | None = None) -> bytes | None:
+    if file_bytes and len(file_bytes) > 100:
+        return file_bytes
+    if url:
+        return await download_resume_pdf(url)
     return None
 
 
@@ -61,7 +73,7 @@ async def process_single_resume(candidate: dict) -> dict:
 
     pdf_bytes = await download_resume_pdf(resume_url)
     if not pdf_bytes:
-        raise RuntimeError("Failed to download resume PDF from Google Drive")
+        raise RuntimeError("Failed to download resume PDF from URL")
 
     resume_text = extract_text_from_pdf(pdf_bytes)
     if not resume_text.strip():

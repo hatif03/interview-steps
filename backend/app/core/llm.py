@@ -1,10 +1,16 @@
 import json
+import logging
 import os
 import asyncio
 import litellm
 from app.config import settings
 
 litellm.drop_params = True
+litellm.set_verbose = False
+litellm.suppress_debug_info = True
+litellm.turn_off_message_logging = True
+logging.getLogger("LiteLLM").setLevel(logging.CRITICAL)
+logging.getLogger("litellm").setLevel(logging.CRITICAL)
 
 MAX_RETRIES = 3
 BASE_DELAY = 5.0
@@ -27,6 +33,45 @@ DEFAULT_FEEDBACK_CHAIN = [
     "gemini/gemini-2.0-flash",
 ]
 
+GEMINI_MODELS = [
+    "gemini/gemini-2.0-flash",
+    "gemini/gemini-2.0-flash-lite",
+]
+
+_PLACEHOLDER_MARKERS = (
+    "your-",
+    "change-me",
+    "placeholder",
+    "example",
+    "xxx",
+    "gsk_your",
+    "sk-your",
+)
+
+
+def _is_valid_api_key(key: str | None) -> bool:
+    if not key:
+        return False
+    value = key.strip()
+    if len(value) < 12:
+        return False
+    lower = value.lower()
+    return not any(marker in lower for marker in _PLACEHOLDER_MARKERS)
+
+
+def has_llm_provider() -> bool:
+    return any(
+        _is_valid_api_key(key)
+        for key in (
+            settings.groq_api_key,
+            settings.gemini_api_key,
+            settings.deepseek_api_key,
+            settings.dashscope_api_key,
+            settings.openai_api_key,
+            os.environ.get("GOOGLE_API_KEY"),
+        )
+    )
+
 
 def _parse_chain(env_value: str, default: list[str]) -> list[str]:
     if env_value and env_value.strip():
@@ -36,36 +81,54 @@ def _parse_chain(env_value: str, default: list[str]) -> list[str]:
 
 def _api_key_for_model(model: str) -> str | None:
     if model.startswith("groq/"):
-        return settings.groq_api_key
-    if model.startswith("deepseek/"):
-        return settings.deepseek_api_key
-    if model.startswith("dashscope/"):
-        return settings.dashscope_api_key
-    if model.startswith("gemini/"):
-        return settings.gemini_api_key or os.environ.get("GOOGLE_API_KEY")
-    return settings.gemini_api_key
+        key = settings.groq_api_key
+    elif model.startswith("deepseek/"):
+        key = settings.deepseek_api_key
+    elif model.startswith("dashscope/"):
+        key = settings.dashscope_api_key
+    elif model.startswith("openai/"):
+        key = settings.openai_api_key
+    elif model.startswith("gemini/"):
+        key = settings.gemini_api_key or os.environ.get("GOOGLE_API_KEY")
+    else:
+        key = settings.gemini_api_key or os.environ.get("GOOGLE_API_KEY")
+    return key if _is_valid_api_key(key) else None
+
+
+def _append_model(chain: list[dict], model: str, api_key: str | None) -> None:
+    if not api_key:
+        return
+    if any(entry["model"] == model and entry.get("api_key") == api_key for entry in chain):
+        return
+    chain.append({"model": model, "api_key": api_key})
 
 
 def _build_screening_chain() -> list[dict]:
-    chain = []
-    gemini_key = settings.gemini_api_key
-    alt_key = os.environ.get("GOOGLE_API_KEY", "")
-    groq_key = settings.groq_api_key
+    chain: list[dict] = []
 
-    gemini_models = ["gemini/gemini-2.0-flash", "gemini/gemini-2.0-flash-lite", "gemini/gemini-1.5-flash"]
-    gemini_keys = [k for k in [gemini_key, alt_key] if k]
-
-    for model in gemini_models:
-        for key in gemini_keys:
-            chain.append({"model": model, "api_key": key})
-
+    groq_key = _api_key_for_model("groq/llama-3.3-70b-versatile")
     if groq_key:
-        chain.append({"model": "groq/llama-3.3-70b-versatile", "api_key": groq_key})
-        chain.append({"model": "groq/llama-3.1-8b-instant", "api_key": groq_key})
+        _append_model(chain, "groq/llama-3.3-70b-versatile", groq_key)
+        _append_model(chain, "groq/llama-3.1-8b-instant", groq_key)
+
+    gemini_keys = [
+        k
+        for k in (settings.gemini_api_key, os.environ.get("GOOGLE_API_KEY"))
+        if _is_valid_api_key(k)
+    ]
+    for model in GEMINI_MODELS:
+        for key in dict.fromkeys(gemini_keys):
+            _append_model(chain, model, key)
+
+    deepseek_key = _api_key_for_model("deepseek/deepseek-chat")
+    if deepseek_key:
+        _append_model(chain, "deepseek/deepseek-chat", deepseek_key)
 
     primary = settings.litellm_model
-    if primary and not any(c["model"] == primary for c in chain):
-        chain.insert(0, {"model": primary, "api_key": gemini_key})
+    primary_key = _api_key_for_model(primary)
+    if primary and primary_key:
+        if not any(entry["model"] == primary for entry in chain):
+            chain.insert(0, {"model": primary, "api_key": primary_key})
 
     return chain
 
@@ -80,15 +143,33 @@ def _build_task_chain(task: str) -> list[dict]:
     else:
         return _build_screening_chain()
 
-    chain = []
+    chain: list[dict] = []
     for model in models:
         key = _api_key_for_model(model)
-        if key:
-            chain.append({"model": model, "api_key": key})
+        _append_model(chain, model, key)
 
-    if not chain:
-        return _build_screening_chain()
-    return chain
+    return chain or _build_screening_chain()
+
+
+def _should_skip_model(err_str: str) -> bool:
+    return any(
+        token in err_str
+        for token in (
+            "quota",
+            "exhausted",
+            "limit: 0",
+            "permission",
+            "disabled",
+            "403",
+            "not found",
+            "404",
+            "api key not valid",
+            "invalid api key",
+            "authentication",
+            "401",
+            "invalid_argument",
+        )
+    )
 
 
 async def llm_completion(
@@ -97,6 +178,10 @@ async def llm_completion(
     json_mode: bool = False,
     task: str = "screening",
 ) -> str:
+    chain = _build_task_chain(task)
+    if not chain:
+        raise RuntimeError("No LLM provider configured")
+
     messages = []
     if system_prompt:
         messages.append({"role": "system", "content": system_prompt})
@@ -110,8 +195,7 @@ async def llm_completion(
     if json_mode:
         base_kwargs["response_format"] = {"type": "json_object"}
 
-    chain = _build_task_chain(task)
-    last_error = None
+    last_error: Exception | None = None
     for combo in chain:
         model = combo["model"]
         api_key = combo.get("api_key")
@@ -127,29 +211,24 @@ async def llm_completion(
                 last_error = e
                 err_str = str(e).lower()
 
-                if "quota" in err_str or "exhausted" in err_str or "limit: 0" in err_str:
-                    print(f"[LLM] Quota exhausted: {model}, skipping")
-                    break
-                if "permission" in err_str or "disabled" in err_str or "403" in err_str:
-                    print(f"[LLM] Permission denied: {model}, skipping")
-                    break
-                if "not found" in err_str or "404" in err_str:
-                    print(f"[LLM] Model not found: {model}, skipping")
+                if _should_skip_model(err_str):
                     break
 
                 is_retryable = (
-                    "rate" in err_str or "429" in err_str or "connection" in err_str
-                    or "timeout" in err_str or "500" in err_str or "503" in err_str
+                    "rate" in err_str
+                    or "429" in err_str
+                    or "connection" in err_str
+                    or "timeout" in err_str
+                    or "500" in err_str
+                    or "503" in err_str
                 )
                 if not is_retryable or attempt == MAX_RETRIES - 1:
-                    print(f"[LLM] Non-retryable error on {model}: {type(e).__name__}, trying next")
                     break
 
                 delay = BASE_DELAY * (2 ** attempt)
-                print(f"[LLM] Retry {attempt + 1}/{MAX_RETRIES} ({model}) after {delay}s")
                 await asyncio.sleep(delay)
 
-    raise last_error
+    raise last_error or RuntimeError("All LLM providers failed")
 
 
 async def llm_json_completion(prompt: str, system_prompt: str = "", task: str = "screening") -> dict:
@@ -160,3 +239,46 @@ async def llm_json_completion(prompt: str, system_prompt: str = "", task: str = 
         if raw.endswith("```"):
             raw = raw[:-3]
     return json.loads(raw)
+
+
+async def llm_json_completion_optional(
+    prompt: str,
+    system_prompt: str = "",
+    task: str = "screening",
+    max_models: int = 2,
+) -> dict | None:
+    """Best-effort JSON completion; returns None instead of raising."""
+    if not has_llm_provider():
+        return None
+
+    chain = _build_task_chain(task)[:max_models]
+    if not chain:
+        return None
+
+    messages = [{"role": "user", "content": prompt}]
+    if system_prompt:
+        messages.insert(0, {"role": "system", "content": system_prompt})
+
+    for combo in chain:
+        kwargs = {
+            "model": combo["model"],
+            "messages": messages,
+            "temperature": 0.2,
+            "max_tokens": 2048,
+            "response_format": {"type": "json_object"},
+            "api_key": combo.get("api_key"),
+            "timeout": 12,
+        }
+        try:
+            response = await litellm.acompletion(**kwargs)
+            raw = (response.choices[0].message.content or "").strip()
+            if raw.startswith("```"):
+                raw = raw.split("\n", 1)[1] if "\n" in raw else raw[3:]
+                if raw.endswith("```"):
+                    raw = raw[:-3]
+            parsed = json.loads(raw)
+            return parsed if isinstance(parsed, dict) else None
+        except Exception:
+            continue
+
+    return None

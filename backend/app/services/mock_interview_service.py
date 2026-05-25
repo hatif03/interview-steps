@@ -8,16 +8,17 @@ from datetime import datetime, timezone
 from app.core.llm import llm_completion, llm_json_completion
 from app.supabase_repo import get_db
 from app.services.email_service import send_mock_interview_invites
+from app.services.hiring_rounds_service import complete_round, create_round, is_candidate_eliminated, eliminate_candidate
 
-INTERVIEWER_SYSTEM = """You are a professional technical interviewer conducting a voice mock interview.
+INTERVIEWER_SYSTEM = """You are a professional technical interviewer conducting an automated AI voice interview.
 Ask one question at a time. Keep responses concise (2-4 sentences) since they will be read aloud.
 Use follow-up questions when answers are vague. Be encouraging but thorough.
 When all planned questions are covered, thank the candidate and say the interview is complete."""
 
-FEEDBACK_SYSTEM = """You are a professional interviewer analyzing a mock interview transcript.
+FEEDBACK_SYSTEM = """You are a professional interviewer analyzing an automated AI interview transcript.
 Evaluate the candidate thoroughly. Do not be lenient — point out mistakes and areas for improvement."""
 
-FEEDBACK_PROMPT = """Analyze this mock interview transcript and return JSON with this exact structure:
+FEEDBACK_PROMPT = """Analyze this automated AI interview transcript and return JSON with this exact structure:
 {{
   "totalScore": <0-100 integer>,
   "categoryScores": [
@@ -60,7 +61,7 @@ async def generate_questions(
         if concerns:
             eval_context = f"Prior screening concerns to probe: {', '.join(concerns)}"
 
-    prompt = f"""Generate {question_count} interview questions for a personalized mock interview.
+    prompt = f"""Generate {question_count} interview questions for a personalized automated AI interview.
 
 Job title: {job['title']}
 Job description: {job['description'][:2000]}
@@ -109,22 +110,48 @@ async def assign_mock_interviews(
     send_email: bool = False,
 ) -> list[dict]:
     db = get_db()
+    existing = db.query("mock_interviews", filters=[("job_id", "eq", job_id)])
+    existing_by_candidate = {iv["candidate_id"]: iv for iv in existing.data}
+
     created = []
     interview_ids: dict[str, str] = {}
 
     for cid in candidate_ids:
+        if cid in existing_by_candidate:
+            interview_ids[cid] = existing_by_candidate[cid]["id"]
+            continue
         interview = await generate_questions(job_id, cid, interview_type, question_count)
         created.append(interview)
         interview_ids[cid] = interview["id"]
+        create_round(
+            candidate_id=cid,
+            job_id=job_id,
+            round_type="ai_interview",
+            reference_id=interview["id"],
+            status="pending",
+        )
         db.update("candidates", cid, {
-            "pipeline_stage": "mock_interview_assigned",
-            "status_message": "Mock interview assigned — check your email for portal link",
+            "pipeline_stage": "ai_interview_assigned",
+            "status_message": "Automated AI interview assigned — check your candidate portal",
         })
 
     if send_email:
-        await send_mock_interview_invites(job_id, candidate_ids, interview_ids)
+        await send_mock_interview_invites(job_id, list(interview_ids.keys()), interview_ids)
 
     return created
+
+
+async def ensure_ai_interviews_for_candidates(
+    job_id: str,
+    candidate_ids: list[str],
+    *,
+    send_email: bool = False,
+) -> list[dict]:
+    """Create AI interviews for shortlisted candidates who do not have one yet."""
+    unique_ids = list(dict.fromkeys(candidate_ids))
+    if not unique_ids:
+        return []
+    return await assign_mock_interviews(job_id, unique_ids, send_email=send_email)
 
 
 async def start_session(mock_interview_id: str, user_id: str | None = None) -> dict:
@@ -134,8 +161,24 @@ async def start_session(mock_interview_id: str, user_id: str | None = None) -> d
         raise ValueError("Mock interview not found")
 
     mi = interview.data[0]
+    job = db.get_by_id("jobs", mi["job_id"])
+    if job.data and job.data[0].get("ai_interview_round_status") == "closed":
+        raise ValueError("AI interview round is closed")
+    if is_candidate_eliminated(mi["candidate_id"], mi["job_id"]):
+        raise ValueError("You are not eligible for further interviews on this application")
+
+    rounds = db.query(
+        "hiring_rounds",
+        filters=[
+            ("reference_id", "eq", mock_interview_id),
+            ("round_type", "eq", "ai_interview"),
+        ],
+    )
+    if rounds.data and rounds.data[0].get("outcome") == "not_shortlisted":
+        raise ValueError("This interview is closed — view your feedback and recommendations")
+
     questions = mi.get("questions", [])
-    opening = f"Hello! Welcome to your mock interview for the {mi.get('role', 'position')} role. Let's begin."
+    opening = f"Hello! Welcome to your automated AI interview for the {mi.get('role', 'position')} role. Let's begin."
 
     session_data = {
         "mock_interview_id": mock_interview_id,
@@ -176,6 +219,14 @@ async def process_turn(session_id: str, user_message: str) -> dict:
         raise ValueError("Session not found")
 
     session = session_result.data[0]
+    mock_interview_id = session.get("mock_interview_id")
+    if mock_interview_id:
+        interview = db.get_by_id("mock_interviews", mock_interview_id)
+        if interview.data:
+            mi = interview.data[0]
+            if is_candidate_eliminated(mi["candidate_id"], mi["job_id"]):
+                raise ValueError("You are not eligible for further interviews on this application")
+
     if session.get("status") == "completed":
         return {
             "assistantMessage": "This interview session is already complete.",
@@ -272,11 +323,24 @@ async def generate_feedback(session_id: str, feedback_id: str | None = None) -> 
         fid = inserted.data[0]["id"]
 
     candidate_id = session.get("candidate_id")
+    interview_id = session.get("mock_interview_id")
     if candidate_id:
         db.update("candidates", candidate_id, {
-            "pipeline_stage": "mock_interview_completed",
-            "status_message": f"Mock interview complete — score: {feedback_data['total_score']}/100",
+            "pipeline_stage": "ai_interview_completed",
+            "status_message": f"AI interview complete — score: {feedback_data['total_score']}/100",
         })
+
+    if interview_id:
+        complete_round(
+            interview_id,
+            round_type="ai_interview",
+            total_score=feedback_data["total_score"],
+            review_summary={
+                "strengths": feedback_data.get("strengths", []),
+                "areas_for_improvement": feedback_data.get("areas_for_improvement", []),
+                "final_assessment": feedback_data.get("final_assessment", ""),
+            },
+        )
 
     return {"success": True, "feedbackId": fid, **feedback_data}
 

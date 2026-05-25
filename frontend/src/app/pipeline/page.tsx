@@ -12,9 +12,11 @@ import {
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { PageSkeleton } from "@/components/loading";
+import { PageHeader } from "@/components/page-header";
 import { RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
+import { motion } from "framer-motion";
 
 const STAGE_ORDER = [
   "uploaded",
@@ -25,6 +27,10 @@ const STAGE_ORDER = [
   "test_sent",
   "test_completed",
   "shortlisted",
+  "assessment_assigned",
+  "assessment_completed",
+  "ai_interview_assigned",
+  "ai_interview_completed",
   "mock_interview_assigned",
   "mock_interview_completed",
   "interview_scheduled",
@@ -40,8 +46,12 @@ const STAGE_CONFIG: Record<string, { label: string; color: string; bg: string }>
   test_sent: { label: "Test Sent", color: "border-cyan-300", bg: "bg-cyan-50" },
   test_completed: { label: "Test Done", color: "border-teal-300", bg: "bg-teal-50" },
   shortlisted: { label: "Shortlisted", color: "border-green-300", bg: "bg-green-50" },
-  mock_interview_assigned: { label: "Mock Assigned", color: "border-indigo-300", bg: "bg-indigo-50" },
-  mock_interview_completed: { label: "Mock Done", color: "border-violet-300", bg: "bg-violet-50" },
+  assessment_assigned: { label: "Assessment", color: "border-cyan-300", bg: "bg-cyan-50" },
+  assessment_completed: { label: "Assessment Done", color: "border-teal-300", bg: "bg-teal-50" },
+  ai_interview_assigned: { label: "AI Interview", color: "border-indigo-300", bg: "bg-indigo-50" },
+  ai_interview_completed: { label: "AI Interview Done", color: "border-violet-300", bg: "bg-violet-50" },
+  mock_interview_assigned: { label: "AI Interview", color: "border-indigo-300", bg: "bg-indigo-50" },
+  mock_interview_completed: { label: "AI Interview Done", color: "border-violet-300", bg: "bg-violet-50" },
   interview_scheduled: { label: "Interview", color: "border-emerald-300", bg: "bg-emerald-50" },
   error: { label: "Error", color: "border-red-300", bg: "bg-red-50" },
 };
@@ -104,28 +114,28 @@ export default function PipelinePage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Pipeline</h1>
-          <p className="text-muted-foreground mt-1">Kanban view of candidate progression</p>
-        </div>
-        <div className="flex items-center gap-3">
-          <Button variant="outline" size="sm" onClick={refresh} disabled={refreshing} className="gap-1.5">
-            <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} />
-            Refresh
-          </Button>
-          <Select value={selectedJobId} onValueChange={(v) => v && setSelectedJobId(v)}>
-            <SelectTrigger className="w-64">
-              <SelectValue placeholder="Select a job..." />
-            </SelectTrigger>
-            <SelectContent>
-              {jobs.map((j) => (
-                <SelectItem key={j.id} value={j.id}>{j.title}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-      </div>
+      <PageHeader
+        title="Pipeline"
+        description="Kanban view of candidate progression"
+        actions={
+          <div className="flex items-center gap-3">
+            <Button variant="outline" size="sm" onClick={refresh} disabled={refreshing} className="gap-1.5">
+              <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} />
+              Refresh
+            </Button>
+            <Select value={selectedJobId} onValueChange={(v) => v && setSelectedJobId(v)}>
+              <SelectTrigger className="w-64">
+                <SelectValue placeholder="Select a job..." />
+              </SelectTrigger>
+              <SelectContent>
+                {jobs.map((j) => (
+                  <SelectItem key={j.id} value={j.id}>{j.title}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        }
+      />
 
       {!selectedJobId ? (
         <p className="text-muted-foreground">Select a job to view its pipeline.</p>
@@ -142,9 +152,15 @@ export default function PipelinePage() {
                     <Badge variant="secondary" className="text-xs">{stageCandidates.length}</Badge>
                   </div>
                   <div className="space-y-2 max-h-[60vh] overflow-y-auto">
-                    {stageCandidates.map((c) => (
+                    {stageCandidates.map((c, i) => (
                       <Link key={c.id} href={`/candidates/${c.id}`}>
-                        <div className="bg-white rounded-md p-3 border shadow-sm hover:shadow-md transition-shadow cursor-pointer">
+                        <motion.div
+                          layout
+                          initial={{ opacity: 0, y: 8 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ delay: i * 0.03 }}
+                          className="bg-white dark:bg-card rounded-md p-3 border shadow-sm hover:shadow-md transition-shadow cursor-pointer"
+                        >
                           <p className="font-medium text-sm">{c.name}</p>
                           <p className="text-xs text-muted-foreground">{c.college || c.branch || c.email}</p>
                           {c.status_message && (
@@ -162,7 +178,7 @@ export default function PipelinePage() {
                               )}
                             </div>
                           )}
-                        </div>
+                        </motion.div>
                       </Link>
                     ))}
                     {stageCandidates.length === 0 && (

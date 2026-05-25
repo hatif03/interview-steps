@@ -15,6 +15,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { TableSkeleton } from "@/components/loading";
 import { toast } from "sonner";
+import { PageHeader } from "@/components/page-header";
 import { GitFork, Trash2, RotateCcw, AlertCircle } from "lucide-react";
 
 const STAGE_COLORS: Record<string, string> = {
@@ -75,10 +76,7 @@ export default function CandidatesPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">All Candidates</h1>
-        <p className="text-muted-foreground mt-1">Browse all candidates across all jobs</p>
-      </div>
+      <PageHeader title="All Candidates" description="Browse all candidates across all jobs" />
 
       <Card>
         <CardContent className="p-0">

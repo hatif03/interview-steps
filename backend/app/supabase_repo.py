@@ -38,6 +38,10 @@ class QueryResult:
     count: int = 0
 
 
+# Tables that use other timestamp columns (e.g. sent_at) instead of created_at
+_TABLES_WITHOUT_CREATED_AT = frozenset({"email_logs", "assessment_assignments"})
+
+
 class SupabaseRepo:
     """CRUD helper mirroring common Supabase PostgREST patterns."""
 
@@ -48,7 +52,7 @@ class SupabaseRepo:
         doc_id = doc_id or str(uuid.uuid4())
         payload = dict(data)
         payload["id"] = doc_id
-        if "created_at" not in payload:
+        if "created_at" not in payload and collection not in _TABLES_WITHOUT_CREATED_AT:
             payload["created_at"] = _now_iso()
         result = self._table(collection).insert(payload).execute()
         row = _row_to_dict(result.data[0] if result.data else payload)
@@ -62,6 +66,20 @@ class SupabaseRepo:
 
         result = self._table(collection).upsert(payload).execute()
         row = _row_to_dict(result.data[0] if result.data else payload)
+        return QueryResult(data=[row] if row else [], count=1 if row else 0)
+
+    def upsert_by_key(self, collection: str, key_field: str, key_value: str, data: dict) -> QueryResult:
+        payload = dict(data)
+        payload[key_field] = key_value
+        if "created_at" not in payload:
+            payload["created_at"] = _now_iso()
+        result = self._table(collection).upsert(payload, on_conflict=key_field).execute()
+        row = _row_to_dict(result.data[0] if result.data else payload)
+        return QueryResult(data=[row] if row else [], count=1 if row else 0)
+
+    def get_by_field(self, collection: str, field: str, value: str) -> QueryResult:
+        result = self._table(collection).select("*").eq(field, value).limit(1).execute()
+        row = _row_to_dict(result.data[0]) if result.data else None
         return QueryResult(data=[row] if row else [], count=1 if row else 0)
 
     def get_by_id(self, collection: str, doc_id: str) -> QueryResult:
@@ -90,13 +108,14 @@ class SupabaseRepo:
         self,
         collection: str,
         *,
+        columns: str = "*",
         filters: list[tuple[str, str, Any]] | None = None,
         order_by: str | None = None,
         order_desc: bool = False,
         limit: int | None = None,
         offset: int = 0,
     ) -> QueryResult:
-        q = self._table(collection).select("*")
+        q = self._table(collection).select(columns)
         for fld, op, val in filters or []:
             if op == "eq":
                 q = q.eq(fld, val)

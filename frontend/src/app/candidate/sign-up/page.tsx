@@ -1,84 +1,133 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useState, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth-context";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { AuthLayout } from "@/components/auth-layout";
+import { AuthCard } from "@/components/auth/auth-card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { GoogleSignInButton } from "@/components/GoogleSignInButton";
+import { validatePassword, PASSWORD_REQUIREMENTS } from "@/lib/password";
+import { authErrorMessage, EmailConfirmationRequiredError } from "@/lib/auth-errors";
 
-export default function CandidateSignUpPage() {
+const FEATURES = [
+  "Build your candidate profile once",
+  "Apply to multiple roles effortlessly",
+  "Get AI-powered interview prep",
+];
+
+function SignUpForm() {
   const { signUp } = useAuth();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const redirect = searchParams.get("redirect") || "/candidate/onboarding";
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    const passwordError = validatePassword(password);
+    if (passwordError) {
+      toast.error(passwordError);
+      return;
+    }
+    if (password !== confirmPassword) {
+      toast.error("Passwords do not match.");
+      return;
+    }
     setLoading(true);
     try {
       await signUp(email, password, name, "candidate");
-      toast.success("Account created! Your interviews are linked by email.");
-      router.push("/candidate");
-    } catch {
-      toast.error("Sign up failed.");
+      toast.success("Account created!");
+      router.push(redirect);
+    } catch (err) {
+      if (err instanceof EmailConfirmationRequiredError) {
+        toast.success("Account created. Check your email to confirm, then sign in.");
+        router.push(`/candidate/sign-in?redirect=${encodeURIComponent(redirect)}`);
+        return;
+      }
+      toast.error(authErrorMessage(err));
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <Card className="w-full max-w-md">
-      <CardHeader>
-        <CardTitle>Candidate Sign Up</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <GoogleSignInButton
-          role="candidate"
-          label="Sign up with Google"
-          onSuccess={() => {
-            toast.success("Signed in with Google — interviews linked by email.");
-            router.push("/candidate");
-          }}
-        />
-        <div className="relative">
-          <div className="absolute inset-0 flex items-center">
-            <span className="w-full border-t" />
-          </div>
-          <div className="relative flex justify-center text-xs uppercase">
-            <span className="bg-card px-2 text-muted-foreground">Or</span>
-          </div>
+    <AuthCard title="Create Candidate Account" description="Join the talent pool and start applying.">
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div className="space-y-2">
+          <Label htmlFor="name">Full Name</Label>
+          <Input id="name" value={name} onChange={(e) => setName(e.target.value)} required autoComplete="name" />
         </div>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <Label htmlFor="name">Full Name</Label>
-            <Input id="name" value={name} onChange={(e) => setName(e.target.value)} required />
-          </div>
-          <div>
-            <Label htmlFor="email">Email (must match invitation)</Label>
-            <Input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
-          </div>
-          <div>
-            <Label htmlFor="password">Password</Label>
-            <Input id="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={6} />
-          </div>
-          <Button type="submit" className="w-full" disabled={loading}>
-            {loading ? "Creating account..." : "Sign Up"}
-          </Button>
-        </form>
-        <p className="text-sm text-muted-foreground mt-4 text-center">
-          Already have an account?{" "}
-          <Link href="/candidate/sign-in" className="text-primary underline">
-            Sign in
-          </Link>
-        </p>
-      </CardContent>
-    </Card>
+        <div className="space-y-2">
+          <Label htmlFor="email">Email</Label>
+          <Input
+            id="email"
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            required
+            autoComplete="email"
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="password">Password</Label>
+          <Input
+            id="password"
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+            minLength={12}
+            autoComplete="new-password"
+          />
+          <p className="text-xs text-muted-foreground">{PASSWORD_REQUIREMENTS}</p>
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="confirmPassword">Confirm password</Label>
+          <Input
+            id="confirmPassword"
+            type="password"
+            value={confirmPassword}
+            onChange={(e) => setConfirmPassword(e.target.value)}
+            required
+            autoComplete="new-password"
+          />
+        </div>
+        <Button type="submit" className="w-full" disabled={loading}>
+          {loading ? "Creating account..." : "Sign Up"}
+        </Button>
+      </form>
+      <p className="text-sm text-muted-foreground text-center">
+        Already have an account?{" "}
+        <Link
+          href={`/candidate/sign-in?redirect=${encodeURIComponent(redirect)}`}
+          className="text-primary font-medium hover:underline"
+        >
+          Sign in
+        </Link>
+      </p>
+    </AuthCard>
+  );
+}
+
+export default function CandidateSignUpPage() {
+  return (
+    <AuthLayout
+      variant="candidate"
+      title="Join the talent pool"
+      subtitle="Create your profile and apply to exciting roles."
+      features={FEATURES}
+    >
+      <Suspense fallback={<div className="animate-pulse text-muted-foreground">Loading...</div>}>
+        <SignUpForm />
+      </Suspense>
+    </AuthLayout>
   );
 }

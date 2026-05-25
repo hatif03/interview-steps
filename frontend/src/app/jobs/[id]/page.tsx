@@ -1,9 +1,9 @@
 // @ts-nocheck
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { api, Job, Candidate, PipelineSummary } from "@/lib/api";
+import { api, Job, Candidate, PipelineSummary, type AssessmentAssignment } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -34,7 +34,19 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
 import Link from "next/link";
 import { BackButton } from "@/components/back-button";
+import { PageHeader } from "@/components/page-header";
 import { PageSkeleton } from "@/components/loading";
+import { CopyLinkButton } from "@/components/copy-link-button";
+import { LinkButton } from "@/components/link-button";
+import { FileDropzone, downloadCsvTemplate } from "@/components/file-dropzone";
+import { WorkflowStepCard } from "@/components/workflow-step-card";
+import { WorkflowRunButton, WorkflowFileUpload } from "@/components/workflow-run-button";
+import { computeWorkflowSteps } from "@/lib/workflow-status";
+import { AssessmentRoundHub } from "@/components/assessment/AssessmentRoundHub";
+import { AiInterviewRoundHub } from "@/components/assessment/AiInterviewRoundHub";
+import { WorkflowSection } from "@/components/workflow/WorkflowSection";
+import { WorkflowPipelineOverview, type PipelineStep } from "@/components/workflow/WorkflowPipelineOverview";
+import type { AiInterviewResult, RoundStats } from "@/lib/api";
 import {
   Upload,
   Brain,
@@ -51,6 +63,7 @@ import {
   CheckCircle2,
   Clock,
   Info,
+  XCircle,
 } from "lucide-react";
 
 const STAGE_CONFIG: Record<string, { label: string; color: string; icon: typeof Clock }> = {
@@ -62,8 +75,13 @@ const STAGE_CONFIG: Record<string, { label: string; color: string; icon: typeof 
   test_sent: { label: "Test Sent", color: "bg-cyan-100 text-cyan-700", icon: Send },
   test_completed: { label: "Test Done", color: "bg-teal-100 text-teal-700", icon: CheckCircle2 },
   shortlisted: { label: "Shortlisted", color: "bg-green-100 text-green-700", icon: CheckCircle2 },
-  mock_interview_assigned: { label: "Mock Interview", color: "bg-indigo-100 text-indigo-700", icon: Brain },
-  mock_interview_completed: { label: "Mock Done", color: "bg-violet-100 text-violet-700", icon: CheckCircle2 },
+  mock_interview_assigned: { label: "AI Interview", color: "bg-indigo-100 text-indigo-700", icon: Brain },
+  mock_interview_completed: { label: "AI Interview Done", color: "bg-violet-100 text-violet-700", icon: CheckCircle2 },
+  assessment_assigned: { label: "Assessment Assigned", color: "bg-cyan-100 text-cyan-700", icon: Send },
+  assessment_completed: { label: "Assessment Done", color: "bg-teal-100 text-teal-700", icon: CheckCircle2 },
+  ai_interview_assigned: { label: "AI Interview", color: "bg-indigo-100 text-indigo-700", icon: Brain },
+  ai_interview_completed: { label: "AI Interview Done", color: "bg-violet-100 text-violet-700", icon: CheckCircle2 },
+  not_advanced: { label: "Not Advanced", color: "bg-slate-100 text-slate-700", icon: XCircle },
   interview_scheduled: { label: "Interview", color: "bg-emerald-100 text-emerald-700", icon: Calendar },
   error: { label: "Error", color: "bg-red-100 text-red-700", icon: AlertCircle },
 };
@@ -187,6 +205,37 @@ function CandidatePicker({
   );
 }
 
+type AiPendingRow = { candidate_id: string; candidate?: Candidate | null };
+
+function mergeAiInterviewPending(
+  assessmentResults: AssessmentAssignment[],
+  aiInterviewResults: AiInterviewResult[],
+  aiInterviewsPending: AiPendingRow[],
+  shortlistedIds: string[],
+): AiPendingRow[] {
+  const assignedCandidateIds = new Set(aiInterviewResults.map((r) => r.candidate_id));
+  const byCandidate = new Map<string, AiPendingRow>();
+
+  for (const p of aiInterviewsPending) {
+    byCandidate.set(p.candidate_id, p);
+  }
+  for (const a of assessmentResults) {
+    if (a.result?.outcome !== "shortlisted") continue;
+    if (!assignedCandidateIds.has(a.candidate_id) && !byCandidate.has(a.candidate_id)) {
+      byCandidate.set(a.candidate_id, {
+        candidate_id: a.candidate_id,
+        candidate: a.candidate,
+      });
+    }
+  }
+  for (const cid of shortlistedIds) {
+    if (!assignedCandidateIds.has(cid) && !byCandidate.has(cid)) {
+      byCandidate.set(cid, { candidate_id: cid });
+    }
+  }
+  return [...byCandidate.values()];
+}
+
 export default function JobDetailPage() {
   const params = useParams();
   const router = useRouter();
@@ -209,10 +258,21 @@ export default function JobDetailPage() {
   const [interviewSelectedIds, setInterviewSelectedIds] = useState<Set<string>>(new Set());
   const [interviewPickerOpen, setInterviewPickerOpen] = useState(false);
 
-  const [mockTopN, setMockTopN] = useState(5);
-  const [mockSelectedIds, setMockSelectedIds] = useState<Set<string>>(new Set());
-  const [mockPickerOpen, setMockPickerOpen] = useState(false);
-  const [mockSendEmail, setMockSendEmail] = useState(true);
+  const [assessmentTopN, setAssessmentTopN] = useState(5);
+  const [assessmentSelectedIds, setAssessmentSelectedIds] = useState<Set<string>>(new Set());
+  const [assessmentPickerOpen, setAssessmentPickerOpen] = useState(false);
+  const [assessmentSendEmail, setAssessmentSendEmail] = useState(true);
+  const [assessmentResults, setAssessmentResults] = useState<AssessmentAssignment[]>([]);
+  const [aiInterviewResults, setAiInterviewResults] = useState<AiInterviewResult[]>([]);
+  const [aiInterviewsPending, setAiInterviewsPending] = useState<Array<{ candidate_id: string; candidate?: Candidate | null }>>([]);
+  const [shortlistedIds, setShortlistedIds] = useState<string[]>([]);
+  const [liveShortlistedIds, setLiveShortlistedIds] = useState<string[]>([]);
+  const [assessmentRoundStatus, setAssessmentRoundStatus] = useState("open");
+  const [aiRoundStatus, setAiRoundStatus] = useState("open");
+  const [assessmentStats, setAssessmentStats] = useState<RoundStats | null>(null);
+  const [aiStats, setAiStats] = useState<RoundStats | null>(null);
+  const [reviewLoading, setReviewLoading] = useState(false);
+  const [sendInterviewEmail, setSendInterviewEmail] = useState(true);
 
   const toggleTestCandidate = (id: string) => {
     setTestSelectedIds((prev) => {
@@ -230,8 +290,8 @@ export default function JobDetailPage() {
     });
   };
 
-  const toggleMockCandidate = (id: string) => {
-    setMockSelectedIds((prev) => {
+  const toggleAssessmentCandidate = (id: string) => {
+    setAssessmentSelectedIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id); else next.add(id);
       return next;
@@ -239,49 +299,115 @@ export default function JobDetailPage() {
   };
 
   const prevCandidatesRef = useRef<Candidate[]>([]);
+  const refreshInFlightRef = useRef(false);
 
-  const refresh = useCallback(async () => {
+  const applyCandidateUpdates = useCallback((c: { candidates: Candidate[] }, prev: Candidate[]) => {
+    if (prev.length > 0) {
+      const prevMap = new Map(prev.map((x) => [x.id, x]));
+      let newlyCompleted = 0;
+      let newlyFailed = 0;
+      for (const cand of c.candidates) {
+        const old = prevMap.get(cand.id);
+        if (!old) continue;
+        if (old.pipeline_stage === "evaluating" && cand.pipeline_stage === "evaluated") newlyCompleted++;
+        if (old.pipeline_stage !== "error" && cand.pipeline_stage === "error") newlyFailed++;
+      }
+      if (newlyCompleted > 0) toast.success(`${newlyCompleted} candidate${newlyCompleted > 1 ? "s" : ""} evaluation complete`);
+      if (newlyFailed > 0) toast.error(`${newlyFailed} candidate${newlyFailed > 1 ? "s" : ""} failed — check error details`);
+
+      const allDone = c.candidates.every((x) => x.pipeline_stage !== "evaluating" && !(x.status_message && x.status_message.includes("Processing")));
+      const wasBusy = prev.some((x) => x.pipeline_stage === "evaluating" || (x.status_message && x.status_message.includes("Processing")));
+      if (wasBusy && allDone && c.candidates.length > 0) {
+        const errCount = c.candidates.filter((x) => x.pipeline_stage === "error").length;
+        if (errCount === 0) toast.success("All processing complete!");
+        else toast.warning(`Processing finished with ${errCount} error${errCount > 1 ? "s" : ""}`);
+      }
+    }
+
+    prevCandidatesRef.current = c.candidates;
+    setCandidates((existing) => {
+      if (!existing.length) return c.candidates;
+      const incoming = new Map(c.candidates.map((x) => [x.id, x]));
+      return existing.map((row) => {
+        const updated = incoming.get(row.id);
+        if (!updated) return row;
+        return { ...row, ...updated, scores: updated.scores ?? row.scores };
+      });
+    });
+  }, []);
+
+  const applyRoundSummary = useCallback((round: Awaited<ReturnType<typeof api.getRoundSummary>> | null) => {
+    if (round) {
+      setAssessmentResults(round.assignments || []);
+      setAiInterviewResults(round.ai_interviews || []);
+      setAiInterviewsPending(round.ai_interviews_pending || []);
+      setShortlistedIds(round.assessment_shortlisted_ids || []);
+      setLiveShortlistedIds(round.live_shortlisted_ids || []);
+      setAssessmentRoundStatus(round.assessment?.round_status || "open");
+      setAiRoundStatus(round.ai_interview_round_status || "open");
+      setAssessmentStats(round.assessment_stats || null);
+      setAiStats(round.ai_stats || null);
+    } else {
+      setAssessmentResults([]);
+      setAiInterviewResults([]);
+      setAiInterviewsPending([]);
+      setShortlistedIds([]);
+      setLiveShortlistedIds([]);
+    }
+  }, []);
+
+  const refreshRoundData = useCallback(async () => {
     try {
-      const [j, c, p] = await Promise.all([
+      const round = await api.getRoundSummary(jobId);
+      applyRoundSummary(round);
+    } catch (err) {
+      console.error(err);
+    }
+  }, [applyRoundSummary, jobId]);
+
+  const refresh = useCallback(async (options?: { light?: boolean }) => {
+    if (refreshInFlightRef.current) return;
+    refreshInFlightRef.current = true;
+    try {
+      if (options?.light) {
+        const c = await api.listCandidates({
+          job_id: jobId,
+          limit: 200,
+          summary: true,
+          include_scores: false,
+        }).catch((err) => {
+          console.error(err);
+          return null;
+        });
+        if (c) applyCandidateUpdates(c, prevCandidatesRef.current);
+        return;
+      }
+
+      const [jobResult, candidatesResult, pipelineResult] = await Promise.allSettled([
         api.getJob(jobId),
         api.listCandidates({ job_id: jobId, limit: 200 }),
         api.getPipelineSummary(jobId),
       ]);
-      setJob(j);
-      setPipeline(p);
 
-      // Detect transitions and fire toasts
-      const prev = prevCandidatesRef.current;
-      if (prev.length > 0) {
-        const prevMap = new Map(prev.map((x) => [x.id, x]));
-        let newlyCompleted = 0;
-        let newlyFailed = 0;
-        for (const cand of c.candidates) {
-          const old = prevMap.get(cand.id);
-          if (!old) continue;
-          if (old.pipeline_stage === "evaluating" && cand.pipeline_stage === "evaluated") newlyCompleted++;
-          if (old.pipeline_stage !== "error" && cand.pipeline_stage === "error") newlyFailed++;
-        }
-        if (newlyCompleted > 0) toast.success(`${newlyCompleted} candidate${newlyCompleted > 1 ? "s" : ""} evaluation complete`);
-        if (newlyFailed > 0) toast.error(`${newlyFailed} candidate${newlyFailed > 1 ? "s" : ""} failed — check error details`);
+      if (jobResult.status === "fulfilled") setJob(jobResult.value);
+      else console.error(jobResult.reason);
 
-        const allDone = c.candidates.every((x) => x.pipeline_stage !== "evaluating" && !(x.status_message && x.status_message.includes("Processing")));
-        const wasBusy = prev.some((x) => x.pipeline_stage === "evaluating" || (x.status_message && x.status_message.includes("Processing")));
-        if (wasBusy && allDone && c.candidates.length > 0) {
-          const errCount = c.candidates.filter((x) => x.pipeline_stage === "error").length;
-          if (errCount === 0) toast.success("All processing complete!");
-          else toast.warning(`Processing finished with ${errCount} error${errCount > 1 ? "s" : ""}`);
-        }
+      if (pipelineResult.status === "fulfilled") setPipeline(pipelineResult.value);
+      else console.error(pipelineResult.reason);
+
+      if (candidatesResult.status === "fulfilled") {
+        applyCandidateUpdates(candidatesResult.value, prevCandidatesRef.current);
+      } else {
+        console.error(candidatesResult.reason);
       }
-
-      prevCandidatesRef.current = c.candidates;
-      setCandidates(c.candidates);
-    } catch (err) {
-      console.error(err);
     } finally {
+      refreshInFlightRef.current = false;
       setLoading(false);
+      if (!options?.light) void refreshRoundData();
     }
-  }, [jobId]);
+  }, [applyCandidateUpdates, jobId, refreshRoundData]);
+
+  const wasProcessingRef = useRef(false);
 
   useEffect(() => { refresh(); }, [refresh]);
 
@@ -291,8 +417,13 @@ export default function JobDetailPage() {
       (c) => c.pipeline_stage === "evaluating" || c.pipeline_stage === "uploaded" ||
              (c.status_message && c.status_message.includes("Processing"))
     );
+    if (wasProcessingRef.current && !hasProcessing) {
+      void refresh();
+    }
+    wasProcessingRef.current = hasProcessing;
+
     if (hasProcessing) {
-      autoRefreshRef.current = setInterval(refresh, 3000);
+      autoRefreshRef.current = setInterval(() => refresh({ light: true }), 5000);
     } else if (autoRefreshRef.current) {
       clearInterval(autoRefreshRef.current);
       autoRefreshRef.current = null;
@@ -302,40 +433,21 @@ export default function JobDetailPage() {
     };
   }, [candidates, refresh]);
 
-  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const handleUploadFile = async (file: File) => {
     setActionLoading("upload");
     try {
       const result = await api.uploadCandidates(jobId, file);
       toast.success(`Uploaded ${result.count} candidates. Resume processing started.`);
-      setTimeout(refresh, 2000);
+      refresh();
     } catch (err) {
       toast.error("Upload failed: " + (err instanceof Error ? err.message : "Unknown error"));
     } finally {
       setActionLoading(null);
-      e.target.value = "";
     }
   };
 
-  const handleTestUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setActionLoading("test-upload");
-    try {
-      const result = await api.uploadTestResults(jobId, file);
-      toast.success(`Updated test results for ${result.count} candidates.`);
-      setTimeout(refresh, 3000);
-    } catch (err) {
-      toast.error("Upload failed");
-    } finally {
-      setActionLoading(null);
-      e.target.value = "";
-    }
-  };
-
-  const runAction = async (action: string, fn: () => Promise<unknown>) => {
-    setActionLoading(action);
+  const runAction = async (action: string, fn: () => Promise<unknown>, loadingKey?: string) => {
+    setActionLoading(loadingKey ?? action);
     try {
       await fn();
       toast.success(`${action} started!`);
@@ -387,6 +499,23 @@ export default function JobDetailPage() {
     }
   };
 
+  const mergedAiPending = useMemo(
+    () =>
+      mergeAiInterviewPending(
+        assessmentResults,
+        aiInterviewResults,
+        aiInterviewsPending,
+        shortlistedIds
+      ),
+    [assessmentResults, aiInterviewResults, aiInterviewsPending, shortlistedIds]
+  );
+
+  const showAiHub =
+    aiInterviewResults.length > 0 ||
+    mergedAiPending.length > 0 ||
+    assessmentResults.some((a) => a.result?.outcome === "shortlisted") ||
+    shortlistedIds.length > 0;
+
   if (loading) return <PageSkeleton rows={4} />;
   if (!job) return <p className="text-destructive">Job not found.</p>;
 
@@ -396,12 +525,57 @@ export default function JobDetailPage() {
     return ra - rb;
   });
 
+  const liveInterviewCandidates = liveShortlistedIds.length > 0
+    ? rankedCandidates.filter((c) => liveShortlistedIds.includes(c.id))
+    : [];
+
+  const assessmentAssignedCount = assessmentResults.length;
+  const assessmentGradedCount = assessmentResults.filter((r) => r.status === "graded" || r.result).length;
+  const aiAwaitingReview = aiStats?.awaiting_decision ?? aiInterviewResults.filter(
+    (r) => r.feedback && (r.outcome === "pending" || r.outcome == null)
+  ).length;
+
+  const runRoundAction = async (label: string, fn: () => Promise<unknown>) => {
+    setReviewLoading(true);
+    try {
+      await fn();
+      toast.success(label);
+      refresh();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Action failed");
+    } finally {
+      setReviewLoading(false);
+    }
+  };
+
+  const defaultAssessmentStats: RoundStats = {
+    total: assessmentResults.length,
+    not_started: assessmentResults.filter((r) => r.status === "assigned").length,
+    in_progress: assessmentResults.filter((r) => r.status === "in_progress").length,
+    graded: assessmentGradedCount,
+    awaiting_decision: assessmentResults.filter(
+      (r) => r.status === "graded" && (r.result?.outcome === "pending" || !r.result?.outcome)
+    ).length,
+    shortlisted: assessmentResults.filter((r) => r.result?.outcome === "shortlisted").length,
+    not_shortlisted: assessmentResults.filter((r) => r.result?.outcome === "not_shortlisted").length,
+  };
+
+  const defaultAiStats: RoundStats = {
+    total: aiInterviewResults.length,
+    not_started: aiInterviewResults.filter((r) => !r.feedback).length,
+    in_progress: 0,
+    completed: aiInterviewResults.filter((r) => r.feedback).length,
+    awaiting_decision: aiAwaitingReview,
+    shortlisted: aiInterviewResults.filter((r) => r.outcome === "shortlisted").length,
+    not_shortlisted: aiInterviewResults.filter((r) => r.outcome === "not_shortlisted").length,
+  };
+
   const applyTestTopN = () => {
     setTestSelectedIds(new Set(rankedCandidates.slice(0, testTopN).map((c) => c.id)));
   };
 
   const applyInterviewTopN = () => {
-    setInterviewSelectedIds(new Set(rankedCandidates.slice(0, interviewTopN).map((c) => c.id)));
+    setInterviewSelectedIds(new Set(liveInterviewCandidates.slice(0, interviewTopN).map((c) => c.id)));
   };
 
   const processingCount = candidates.filter(
@@ -409,24 +583,74 @@ export default function JobDetailPage() {
   ).length;
   const errorCount = candidates.filter((c) => c.pipeline_stage === "error").length;
 
+  const workflowSteps = computeWorkflowSteps(
+    candidates,
+    pipeline,
+    actionLoading,
+    assessmentAssignedCount,
+    assessmentGradedCount,
+    aiInterviewResults.length,
+    aiAwaitingReview,
+    liveShortlistedIds.length,
+  );
+
+  const pipelineOverview: PipelineStep[] = [
+    {
+      id: "prep",
+      label: "Pre-screen",
+      status: rankedCandidates.some((c) => c.scores?.rank != null) ? "completed" : candidates.length > 0 ? "active" : "pending",
+      detail: rankedCandidates.filter((c) => c.scores?.rank != null).length ? `${rankedCandidates.filter((c) => c.scores?.rank != null).length} ranked` : undefined,
+    },
+    {
+      id: "assessment",
+      label: "Assessment",
+      status: assessmentAssignedCount === 0 ? "pending" : assessmentGradedCount > 0 ? "completed" : "active",
+      detail: assessmentAssignedCount ? `${assessmentGradedCount}/${assessmentAssignedCount} graded` : undefined,
+    },
+    {
+      id: "ai",
+      label: "AI Interview",
+      status:
+        aiInterviewResults.length === 0 && mergedAiPending.length === 0
+          ? "pending"
+          : aiAwaitingReview > 0
+            ? "active"
+            : "completed",
+      detail:
+        aiInterviewResults.length || mergedAiPending.length
+          ? `${aiInterviewResults.length + mergedAiPending.length} in round`
+          : undefined,
+    },
+    {
+      id: "live",
+      label: "Live Interview",
+      status: liveShortlistedIds.length > 0 ? "active" : pipeline?.stages?.interview_scheduled ? "completed" : "pending",
+      detail: liveShortlistedIds.length ? `${liveShortlistedIds.length} in pool` : undefined,
+    },
+  ];
+
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between">
-        <div>
-          <BackButton href="/jobs" label="Back to Jobs" />
-          <h1 className="text-3xl font-bold tracking-tight">{job.title}</h1>
-          <p className="text-muted-foreground mt-1 line-clamp-2">{job.description.slice(0, 200)}...</p>
-        </div>
-        <AlertDialog>
-          <AlertDialogTrigger
-            className="inline-flex items-center justify-center gap-1.5 rounded-md text-sm font-medium bg-destructive text-destructive-foreground hover:bg-destructive/90 h-9 px-3"
-          >
-            <Trash2 className="h-4 w-4" /> Delete Job
-          </AlertDialogTrigger>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Delete this job?</AlertDialogTitle>
-              <AlertDialogDescription>
+      <BackButton href="/jobs" label="Back to Jobs" />
+      <PageHeader
+        title={job.title}
+        description={job.description.slice(0, 200) + "..."}
+        badge={
+          <Badge variant={job.status === "open" ? "default" : "secondary"} className="capitalize">
+            {job.status || "draft"}
+          </Badge>
+        }
+        actions={
+          <AlertDialog>
+            <AlertDialogTrigger
+              className="inline-flex items-center justify-center gap-1.5 rounded-md text-sm font-medium bg-destructive text-destructive-foreground hover:bg-destructive/90 h-9 px-3"
+            >
+              <Trash2 className="h-4 w-4" /> Delete Job
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Delete this job?</AlertDialogTitle>
+                <AlertDialogDescription>
                 This will permanently delete "{job.title}" and all {candidates.length} candidates. This action cannot be undone.
               </AlertDialogDescription>
             </AlertDialogHeader>
@@ -438,7 +662,8 @@ export default function JobDetailPage() {
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
-      </div>
+        }
+      />
 
       {/* Live status banner */}
       {(processingCount > 0 || errorCount > 0) && (
@@ -476,15 +701,75 @@ export default function JobDetailPage() {
         </div>
       )}
 
-      <Tabs defaultValue="candidates" className="space-y-4">
-        <TabsList>
+      <Tabs defaultValue="overview" className="space-y-4">
+        <TabsList className="flex-wrap h-auto">
+          <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="candidates">
             Candidates ({candidates.length})
             {processingCount > 0 && <Loader2 className="ml-1.5 h-3 w-3 animate-spin" />}
           </TabsTrigger>
+          <TabsTrigger value="intake">Intake</TabsTrigger>
+          {job.apply_enabled && <TabsTrigger value="apply-form">Apply Form</TabsTrigger>}
           <TabsTrigger value="workflow">Workflow</TabsTrigger>
           <TabsTrigger value="rankings">Rankings</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="overview" className="space-y-4">
+          <div className="grid gap-4 md:grid-cols-3">
+            <Card>
+              <CardHeader className="pb-2"><CardTitle className="text-sm">Status</CardTitle></CardHeader>
+              <CardContent>
+                <Badge className="capitalize">{job.status || "draft"}</Badge>
+                {job.location && <p className="text-xs text-muted-foreground mt-2">{job.location} · {job.job_type}</p>}
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2"><CardTitle className="text-sm">Candidates</CardTitle></CardHeader>
+              <CardContent><p className="text-2xl font-bold">{candidates.length}</p></CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2"><CardTitle className="text-sm">Sources</CardTitle></CardHeader>
+              <CardContent className="text-sm space-y-1">
+                <p>Upload: {candidates.filter((c) => c.source !== "form").length}</p>
+                <p>Form: {candidates.filter((c) => c.source === "form").length}</p>
+              </CardContent>
+            </Card>
+          </div>
+          {job.apply_enabled && job.apply_slug && (
+            <Card>
+              <CardHeader><CardTitle className="text-base">Share Application Link</CardTitle></CardHeader>
+              <CardContent>
+                <CopyLinkButton url={`${typeof window !== "undefined" ? window.location.origin : ""}/apply/${job.apply_slug}`} />
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
+
+        <TabsContent value="intake" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Bulk Upload</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <FileDropzone onFile={handleUploadFile} disabled={actionLoading === "upload"} />
+              <Button variant="outline" size="sm" onClick={downloadCsvTemplate}>Download CSV template</Button>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {job.apply_enabled && (
+          <TabsContent value="apply-form">
+            <Card>
+              <CardHeader><CardTitle className="text-base">Public Apply Form</CardTitle></CardHeader>
+              <CardContent className="space-y-4">
+                <p className="text-sm text-muted-foreground">Candidates must sign in before submitting. Standard fields: college, branch, CGPA, GitHub, projects, resume.</p>
+                {job.apply_slug && (
+                  <CopyLinkButton url={`${typeof window !== "undefined" ? window.location.origin : ""}/apply/${job.apply_slug}`} />
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+        )}
 
         {/* Candidates Tab */}
         <TabsContent value="candidates">
@@ -498,6 +783,7 @@ export default function JobDetailPage() {
                     <TableHead>College</TableHead>
                     <TableHead>CGPA</TableHead>
                     <TableHead>Stage</TableHead>
+                    <TableHead>Source</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Score</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
@@ -524,6 +810,9 @@ export default function JobDetailPage() {
                             <StageIcon className="h-3 w-3" />
                             {stageConf.label}
                           </span>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className="text-xs capitalize">{c.source || "upload"}</Badge>
                         </TableCell>
                         <TableCell className="max-w-[250px]">
                           {c.status_message ? (
@@ -574,230 +863,428 @@ export default function JobDetailPage() {
         </TabsContent>
 
         {/* Workflow Tab */}
-        <TabsContent value="workflow" className="space-y-4">
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base flex items-center gap-2">
-                  <Upload className="h-4 w-4" /> 1. Upload Candidates
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm text-muted-foreground mb-3">Upload a CSV/Excel file with candidate data.</p>
-                <label className="cursor-pointer block">
-                  <input type="file" accept=".csv,.xlsx,.xls" onChange={handleUpload} className="hidden" />
-                  <div className="w-full inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium border border-input bg-background hover:bg-accent hover:text-accent-foreground h-10 px-4 py-2 cursor-pointer">
-                    {actionLoading === "upload" ? <><Loader2 className="h-4 w-4 animate-spin" />Uploading...</> : "Choose File"}
-                  </div>
-                </label>
-              </CardContent>
-            </Card>
+        <TabsContent value="workflow" className="space-y-6">
+          <WorkflowPipelineOverview steps={pipelineOverview} />
 
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base flex items-center gap-2">
-                  <FileText className="h-4 w-4" /> 2. Process Resumes
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm text-muted-foreground mb-3">Download and extract text from candidate resumes.</p>
-                <Button
-                  variant="outline" className="w-full"
-                  disabled={actionLoading === "resumes" || candidates.length === 0}
-                  onClick={() => runAction("Resume processing", () => api.processResumes(jobId))}
-                >
-                  {actionLoading === "resumes" ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
-                  Process Resumes
-                </Button>
-              </CardContent>
-            </Card>
+          <WorkflowSection
+            title="Pre-screening"
+            description="Upload candidates, process resumes, run AI evaluation, and rank."
+            stepNumber="1"
+            defaultOpen={assessmentAssignedCount === 0}
+          >
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+            <WorkflowStepCard
+              title={<><Upload className="h-4 w-4" /> 1. Upload Candidates</>}
+              description="Upload a CSV/Excel file with candidate data."
+              step={workflowSteps.upload}
+            >
+              <WorkflowFileUpload
+                step={workflowSteps.upload}
+                loading={actionLoading === "upload"}
+                label="Choose File"
+                loadingLabel="Uploading..."
+                skipCompletedGuard
+                onFile={handleUploadFile}
+              />
+            </WorkflowStepCard>
 
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base flex items-center gap-2">
-                  <Brain className="h-4 w-4" /> 3. AI Evaluation
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm text-muted-foreground mb-3">Run LLM evaluation + GitHub analysis + semantic scoring.</p>
-                <Button
-                  className="w-full"
-                  disabled={actionLoading === "evaluate" || candidates.length === 0}
-                  onClick={() => runAction("AI evaluation", () => api.runEvaluations(jobId))}
-                >
-                  {actionLoading === "evaluate" ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Brain className="h-4 w-4 mr-2" />}
-                  Run AI Evaluation
-                </Button>
-              </CardContent>
-            </Card>
+            <WorkflowStepCard
+              title={<><FileText className="h-4 w-4" /> 2. Process Resumes</>}
+              description="Download and extract text from candidate resumes."
+              step={workflowSteps.process_resumes}
+            >
+              <WorkflowRunButton
+                step={workflowSteps.process_resumes}
+                variant="outline"
+                className="w-full"
+                loading={actionLoading === "resumes"}
+                disabled={candidates.length === 0}
+                label="Process Resumes"
+                rerunLabel="Reprocess all resumes"
+                rerunDescription="All resumes are already processed. Re-running will re-download and re-parse every candidate resume."
+                onRun={() => runAction("Resume processing", () => api.processResumes(jobId), "resumes")}
+              />
+            </WorkflowStepCard>
 
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base flex items-center gap-2">
-                  <Trophy className="h-4 w-4" /> 4. Rank Candidates
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm text-muted-foreground mb-3">Compute composite scores and rank candidates.</p>
-                <Button
-                  variant="outline" className="w-full"
-                  disabled={actionLoading === "rank" || candidates.length === 0}
-                  onClick={() => runAction("Ranking", () => api.rankCandidates(jobId))}
-                >
-                  {actionLoading === "rank" ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
-                  Compute Rankings
-                </Button>
-              </CardContent>
-            </Card>
+            <WorkflowStepCard
+              title={<><Brain className="h-4 w-4" /> 3. AI Evaluation</>}
+              description="Run LLM evaluation + GitHub analysis + semantic scoring."
+              step={workflowSteps.ai_evaluation}
+            >
+              <WorkflowRunButton
+                step={workflowSteps.ai_evaluation}
+                className="w-full"
+                loading={actionLoading === "evaluate"}
+                disabled={candidates.length === 0}
+                label="Run AI Evaluation"
+                loadingLabel="Starting..."
+                rerunLabel="Re-run AI evaluation"
+                rerunDescription="All candidates are already evaluated. Re-running will re-evaluate every candidate and overwrite existing scores."
+                onRun={() => runAction("AI evaluation", () => api.runEvaluations(jobId), "evaluate")}
+              />
+            </WorkflowStepCard>
 
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base flex items-center gap-2">
-                  <Brain className="h-4 w-4" /> 4b. Assign Mock Interview
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <p className="text-sm text-muted-foreground">Generate personalized AI voice mock interviews from resume + job data.</p>
-                <CandidatePicker
-                  candidates={rankedCandidates}
-                  selectedIds={mockSelectedIds}
-                  onToggle={toggleMockCandidate}
-                  topN={mockTopN}
-                  onSetTopN={setMockTopN}
-                  onApplyTopN={() => {
-                    const top = rankedCandidates.slice(0, mockTopN);
-                    setMockSelectedIds(new Set(top.map((c) => c.id)));
-                  }}
-                  open={mockPickerOpen}
-                  onToggleOpen={() => setMockPickerOpen(!mockPickerOpen)}
-                />
-                <label className="flex items-center gap-2 text-sm">
-                  <Checkbox checked={mockSendEmail} onCheckedChange={(v) => setMockSendEmail(!!v)} />
-                  Send email invite to candidate portal
-                </label>
-                <Button
-                  variant="outline"
-                  className="w-full"
-                  disabled={mockSelectedIds.size === 0 || actionLoading === "Assigning mock interviews"}
-                  onClick={() => runAction("Assigning mock interviews", () =>
+            <WorkflowStepCard
+              title={<><Trophy className="h-4 w-4" /> 4. Rank Candidates</>}
+              description="Compute composite scores and rank candidates."
+              step={workflowSteps.rank}
+            >
+              <WorkflowRunButton
+                step={workflowSteps.rank}
+                variant="outline"
+                className="w-full"
+                loading={actionLoading === "rank"}
+                disabled={candidates.length === 0}
+                label="Compute Rankings"
+                rerunLabel="Recompute rankings"
+                rerunDescription="Rankings are already computed. Re-running will recalculate composite scores for all candidates."
+                onRun={() => runAction("Ranking", () => api.rankCandidates(jobId), "rank")}
+              />
+            </WorkflowStepCard>
+            </div>
+          </WorkflowSection>
+
+          <WorkflowSection
+            title="Round 1 — Platform Assessment"
+            description="Create and assign the test, then manage submissions and advance candidates."
+            stepNumber="2"
+            defaultOpen
+          >
+            <div className="grid gap-4 lg:grid-cols-[minmax(280px,340px)_1fr]">
+            <WorkflowStepCard
+              title={<><Send className="h-4 w-4" /> Assign Assessment</>}
+              description="Create on-platform test (MCQ, DSA, SQL) and assign to ranked candidates."
+              step={workflowSteps.platform_assessment}
+              className="h-fit"
+            >
+              <LinkButton href={`/jobs/${jobId}/assessment`} variant="outline" size="sm" className="w-full">
+                Create / Edit Assessment
+              </LinkButton>
+              <CandidatePicker
+                candidates={rankedCandidates}
+                selectedIds={assessmentSelectedIds}
+                onToggle={toggleAssessmentCandidate}
+                topN={assessmentTopN}
+                onSetTopN={setAssessmentTopN}
+                onApplyTopN={() => setAssessmentSelectedIds(new Set(rankedCandidates.slice(0, assessmentTopN).map((c) => c.id)))}
+                open={assessmentPickerOpen}
+                onToggleOpen={() => setAssessmentPickerOpen(!assessmentPickerOpen)}
+              />
+              <label className="flex items-center gap-2 text-sm">
+                <Checkbox checked={assessmentSendEmail} onCheckedChange={(v) => setAssessmentSendEmail(!!v)} />
+                Send email invite to candidates
+              </label>
+              <WorkflowRunButton
+                step={workflowSteps.platform_assessment}
+                variant="outline"
+                className="w-full"
+                loading={actionLoading === "Assigning assessment"}
+                disabled={assessmentSelectedIds.size === 0}
+                skipCompletedGuard
+                label={`Assign to ${assessmentSelectedIds.size} Candidate${assessmentSelectedIds.size !== 1 ? "s" : ""}`}
+                onRun={() =>
+                  runAction("Assigning assessment", () =>
+                    api.assignAssessment({
+                      job_id: jobId,
+                      candidate_ids: [...assessmentSelectedIds],
+                      send_email: assessmentSendEmail,
+                    })
+                  )
+                }
+              />
+            </WorkflowStepCard>
+
+            <AssessmentRoundHub
+              assignments={assessmentResults}
+              stats={assessmentStats || defaultAssessmentStats}
+              roundStatus={assessmentRoundStatus}
+              loading={reviewLoading}
+              onRemind={(ids) =>
+                runRoundAction("Reminders sent", () =>
+                  api.remindRound({
+                    job_id: jobId,
+                    round_type: "platform_test",
+                    source_ids: ids,
+                  })
+                )
+              }
+              onCloseRound={() =>
+                runRoundAction("Assessment round closed", () =>
+                  api.closeRound({ job_id: jobId, round_type: "platform_test" })
+                )
+              }
+              onRerank={() =>
+                runRoundAction("Rankings recomputation started", () => api.rerankJob(jobId))
+              }
+              onAdvanceTopN={(n) =>
+                runRoundAction(`Advanced top ${n} to AI interview`, () =>
+                  api.advanceToNextRound({
+                    job_id: jobId,
+                    round_type: "platform_test",
+                    top_n: n,
+                    send_email: true,
+                    auto_assign: true,
+                  })
+                )
+              }
+              onAdvanceSelected={(ids) =>
+                runRoundAction("Selected candidates advanced to AI interview", () =>
+                  api.advanceToNextRound({
+                    job_id: jobId,
+                    round_type: "platform_test",
+                    source_ids: ids,
+                    send_email: true,
+                    auto_assign: true,
+                  })
+                )
+              }
+              onRejectSelected={(ids) =>
+                runRoundAction("Selected candidates rejected", () =>
+                  api.rejectFromRound({
+                    job_id: jobId,
+                    round_type: "platform_test",
+                    source_ids: ids,
+                  })
+                )
+              }
+            />
+
+            </div>
+          </WorkflowSection>
+
+          {showAiHub && (
+            <WorkflowSection
+              title="Round 2 — Automated AI Interview"
+              description="Review AI interview results and advance candidates to live interviews."
+              stepNumber="3"
+              defaultOpen
+            >
+              <AiInterviewRoundHub
+                interviews={aiInterviewResults}
+                pending={mergedAiPending}
+                stats={aiStats || defaultAiStats}
+                roundStatus={aiRoundStatus}
+                loading={reviewLoading}
+                onAssignPending={() =>
+                  runRoundAction("AI interviews assigned", () =>
                     api.assignMockInterview({
                       job_id: jobId,
-                      candidate_ids: [...mockSelectedIds],
-                      interview_type: "Mixed",
-                      question_count: 5,
-                      send_email: mockSendEmail,
+                      candidate_ids: mergedAiPending.map((p) => p.candidate_id),
+                      send_email: true,
                     })
-                  )}
-                >
-                  Assign to {mockSelectedIds.size} Candidate{mockSelectedIds.size !== 1 ? "s" : ""}
-                </Button>
-              </CardContent>
-            </Card>
+                  )
+                }
+                onRemind={(ids) =>
+                  runRoundAction("Reminders sent", () =>
+                    api.remindRound({
+                      job_id: jobId,
+                      round_type: "ai_interview",
+                      source_ids: ids,
+                    })
+                  )
+                }
+                onCloseRound={() =>
+                  runRoundAction("AI interview round closed", () =>
+                    api.closeRound({ job_id: jobId, round_type: "ai_interview" })
+                  )
+                }
+                onRerank={() =>
+                  runRoundAction("Rankings recomputation started", () => api.rerankJob(jobId))
+                }
+                onAdvanceTopN={(n) =>
+                  runRoundAction(`Advanced top ${n} to live interview`, () =>
+                    api.advanceToNextRound({
+                      job_id: jobId,
+                      round_type: "ai_interview",
+                      top_n: n,
+                      send_email: true,
+                    })
+                  )
+                }
+                onAdvanceSelected={(ids) =>
+                  runRoundAction("Selected candidates advanced to live interview", () =>
+                    api.advanceToNextRound({
+                      job_id: jobId,
+                      round_type: "ai_interview",
+                      source_ids: ids,
+                      send_email: true,
+                    })
+                  )
+                }
+                onRejectSelected={(ids) =>
+                  runRoundAction("Selected candidates rejected", () =>
+                    api.rejectFromRound({
+                      job_id: jobId,
+                      round_type: "ai_interview",
+                      source_ids: ids,
+                    })
+                  )
+                }
+              />
+            </WorkflowSection>
+          )}
 
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base flex items-center gap-2">
-                  <Send className="h-4 w-4" /> 5. Send Test Links
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div>
-                  <Label className="text-xs">Test Link URL</Label>
-                  <Input placeholder="https://..." value={testLink} onChange={(e) => setTestLink(e.target.value)} />
-                </div>
-                <CandidatePicker
-                  candidates={rankedCandidates}
-                  selectedIds={testSelectedIds}
-                  onToggle={toggleTestCandidate}
-                  topN={testTopN}
-                  onSetTopN={setTestTopN}
-                  onApplyTopN={applyTestTopN}
-                  open={testPickerOpen}
-                  onToggleOpen={() => setTestPickerOpen(!testPickerOpen)}
-                />
-                <Button
-                  variant="outline" className="w-full"
-                  disabled={!testLink || testSelectedIds.size === 0}
-                  onClick={() => runAction("Sending test emails", () =>
+          <WorkflowSection
+            title="Final — Live Interviews"
+            description="Schedule live interviews with candidates from the AI interview pool."
+            stepNumber="4"
+            defaultOpen={liveShortlistedIds.length > 0}
+          >
+            <WorkflowStepCard
+              title={<><Calendar className="h-4 w-4" /> Schedule Live Interviews</>}
+              description="Book live interviews with candidates advanced from the AI interview hub."
+              step={workflowSteps.schedule_interviews}
+            >
+              {liveShortlistedIds.length === 0 && (
+                <p className="text-xs text-muted-foreground">
+                  Advance candidates from the AI Interview hub to populate the live pool.
+                </p>
+              )}
+              <div>
+                <Label className="text-xs">Interviewer Email</Label>
+                <Input placeholder="interviewer@company.com" value={interviewerEmail} onChange={(e) => setInterviewerEmail(e.target.value)} />
+              </div>
+              <div>
+                <Label className="text-xs">Start Date</Label>
+                <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+              </div>
+              <CandidatePicker
+                candidates={liveInterviewCandidates}
+                selectedIds={interviewSelectedIds}
+                onToggle={toggleInterviewCandidate}
+                topN={interviewTopN}
+                onSetTopN={setInterviewTopN}
+                onApplyTopN={applyInterviewTopN}
+                open={interviewPickerOpen}
+                onToggleOpen={() => setInterviewPickerOpen(!interviewPickerOpen)}
+              />
+              <label className="flex items-center gap-2 text-sm">
+                <Checkbox checked={sendInterviewEmail} onCheckedChange={(v) => setSendInterviewEmail(!!v)} />
+                Send interview invitation emails after scheduling
+              </label>
+              <WorkflowRunButton
+                step={workflowSteps.schedule_interviews}
+                className="w-full"
+                loading={actionLoading === "Scheduling interviews"}
+                disabled={!interviewerEmail || !startDate || interviewSelectedIds.size === 0}
+                skipCompletedGuard
+                label={`Schedule ${interviewSelectedIds.size} Interview${interviewSelectedIds.size !== 1 ? "s" : ""}`}
+                onRun={async () => {
+                  setActionLoading("Scheduling interviews");
+                  try {
+                    await api.scheduleInterviews({
+                      job_id: jobId,
+                      candidate_ids: [...interviewSelectedIds],
+                      interviewer_email: interviewerEmail,
+                      start_date: startDate,
+                    });
+                    if (sendInterviewEmail) {
+                      await api.sendInterviewEmails(jobId, [...interviewSelectedIds]);
+                    }
+                    toast.success("Interviews scheduled!");
+                    setTimeout(refresh, 3000);
+                  } catch (err) {
+                    toast.error(`Failed: ${err instanceof Error ? err.message : "Unknown error"}`);
+                  } finally {
+                    setActionLoading(null);
+                  }
+                }}
+              />
+            </WorkflowStepCard>
+          </WorkflowSection>
+
+          <WorkflowSection
+            title="Legacy options"
+            description="External test links and CSV score upload — optional fallbacks."
+            defaultOpen={false}
+          >
+            <div className="grid gap-4 md:grid-cols-2">
+            <WorkflowStepCard
+              title={<><Send className="h-4 w-4" /> External Test Links</>}
+              description="Optional fallback: email external assessment links."
+              step={workflowSteps.test_emails}
+            >
+              <div>
+                <Label className="text-xs">Test Link URL</Label>
+                <Input placeholder="https://..." value={testLink} onChange={(e) => setTestLink(e.target.value)} />
+              </div>
+              <CandidatePicker
+                candidates={rankedCandidates}
+                selectedIds={testSelectedIds}
+                onToggle={toggleTestCandidate}
+                topN={testTopN}
+                onSetTopN={setTestTopN}
+                onApplyTopN={applyTestTopN}
+                open={testPickerOpen}
+                onToggleOpen={() => setTestPickerOpen(!testPickerOpen)}
+              />
+              <WorkflowRunButton
+                step={workflowSteps.test_emails}
+                variant="outline"
+                className="w-full"
+                loading={actionLoading === "Sending test emails"}
+                disabled={!testLink || testSelectedIds.size === 0}
+                skipCompletedGuard
+                label={`Send to ${testSelectedIds.size} Candidate${testSelectedIds.size !== 1 ? "s" : ""}`}
+                onRun={() =>
+                  runAction("Sending test emails", () =>
                     api.sendTestEmails({
                       job_id: jobId,
                       candidate_ids: [...testSelectedIds],
                       test_link: testLink,
                     })
-                  )}
-                >
-                  Send to {testSelectedIds.size} Candidate{testSelectedIds.size !== 1 ? "s" : ""}
-                </Button>
-              </CardContent>
-            </Card>
+                  )
+                }
+              />
+            </WorkflowStepCard>
 
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base flex items-center gap-2">
-                  <FileText className="h-4 w-4" /> 6. Upload Test Results
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm text-muted-foreground mb-3">Upload CSV/Excel with test_la and test_code scores.</p>
-                <label className="cursor-pointer block">
-                  <input type="file" accept=".csv,.xlsx,.xls" onChange={handleTestUpload} className="hidden" />
-                  <div className="w-full inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium border border-input bg-background hover:bg-accent hover:text-accent-foreground h-10 px-4 py-2 cursor-pointer">
-                    {actionLoading === "test-upload" ? <><Loader2 className="h-4 w-4 animate-spin" />Uploading...</> : "Upload Test Results"}
-                  </div>
-                </label>
-              </CardContent>
-            </Card>
-
-            <Card className="md:col-span-2 lg:col-span-1">
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base flex items-center gap-2">
-                  <Calendar className="h-4 w-4" /> 7. Schedule Interviews
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div>
-                  <Label className="text-xs">Interviewer Email</Label>
-                  <Input placeholder="interviewer@company.com" value={interviewerEmail} onChange={(e) => setInterviewerEmail(e.target.value)} />
-                </div>
-                <div>
-                  <Label className="text-xs">Start Date</Label>
-                  <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
-                </div>
-                <CandidatePicker
-                  candidates={rankedCandidates}
-                  selectedIds={interviewSelectedIds}
-                  onToggle={toggleInterviewCandidate}
-                  topN={interviewTopN}
-                  onSetTopN={setInterviewTopN}
-                  onApplyTopN={applyInterviewTopN}
-                  open={interviewPickerOpen}
-                  onToggleOpen={() => setInterviewPickerOpen(!interviewPickerOpen)}
-                />
-                <Button
-                  className="w-full"
-                  disabled={!interviewerEmail || !startDate || interviewSelectedIds.size === 0}
-                  onClick={() => runAction("Scheduling interviews", () =>
-                    api.scheduleInterviews({
-                      job_id: jobId,
-                      candidate_ids: [...interviewSelectedIds],
-                      interviewer_email: interviewerEmail,
-                      start_date: startDate,
-                    })
-                  )}
-                >
-                  <Calendar className="h-4 w-4 mr-2" />
-                  Schedule {interviewSelectedIds.size} Interview{interviewSelectedIds.size !== 1 ? "s" : ""}
-                </Button>
-              </CardContent>
-            </Card>
-          </div>
+            <WorkflowStepCard
+              title={<><FileText className="h-4 w-4" /> Upload Legacy Test Results</>}
+              description="Optional fallback: upload CSV/Excel with test_la and test_code scores."
+              step={workflowSteps.test_results}
+            >
+              <WorkflowFileUpload
+                step={workflowSteps.test_results}
+                loading={actionLoading === "test-upload"}
+                label="Upload Test Results"
+                loadingLabel="Uploading..."
+                skipCompletedGuard
+                onFile={async (file) => {
+                  setActionLoading("test-upload");
+                  try {
+                    const result = await api.uploadTestResults(jobId, file);
+                    toast.success(`Updated test results for ${result.count} candidates.`);
+                    setTimeout(refresh, 3000);
+                  } catch {
+                    toast.error("Upload failed");
+                  } finally {
+                    setActionLoading(null);
+                  }
+                }}
+              />
+            </WorkflowStepCard>
+            </div>
+          </WorkflowSection>
         </TabsContent>
 
         {/* Rankings Tab */}
         <TabsContent value="rankings">
           <Card>
-            <CardHeader>
-              <CardTitle>Candidate Rankings</CardTitle>
+            <CardHeader className="flex flex-row items-center justify-between gap-4">
+              <div>
+                <CardTitle>Candidate Rankings</CardTitle>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Composite scores include platform assessment results. Recompute from the Assessment Command Center or Rankings tab, then advance candidates from the hubs.
+                </p>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={actionLoading === "rank"}
+                onClick={() => runAction("Ranking", () => api.rankCandidates(jobId), "rank")}
+              >
+                {actionLoading === "rank" ? "Recomputing..." : "Recompute Rankings"}
+              </Button>
             </CardHeader>
             <CardContent className="p-0">
               <TooltipProvider>
@@ -806,6 +1293,9 @@ export default function JobDetailPage() {
                   <TableRow>
                     <TableHead className="w-16">Rank</TableHead>
                     <TableHead>Name</TableHead>
+                    <TableHead>Assessment</TableHead>
+                    <TableHead>AI Interview</TableHead>
+                    <TableHead>Round Status</TableHead>
                     <TableHead>JD Match</TableHead>
                     <TableHead>GitHub</TableHead>
                     <TableHead>Code Test</TableHead>
@@ -818,8 +1308,21 @@ export default function JobDetailPage() {
                 <TableBody>
                   {rankedCandidates.map((c) => {
                     const bd = c.scores?.score_breakdown;
+                    const assess = assessmentResults
+                      .filter((r) => r.candidate_id === c.id && r.result)
+                      .sort((a, b) => (b.result?.total_score || 0) - (a.result?.total_score || 0))[0];
+                    const aiIv = aiInterviewResults
+                      .filter((r) => r.candidate_id === c.id && r.feedback)
+                      .sort((a, b) => (b.feedback?.total_score || 0) - (a.feedback?.total_score || 0))[0];
+                    const roundLabel = liveShortlistedIds.includes(c.id)
+                      ? "Live pool"
+                      : shortlistedIds.includes(c.id)
+                        ? "AI pool"
+                        : assess?.result?.outcome === "not_shortlisted" || aiIv?.outcome === "not_shortlisted"
+                          ? "Not advanced"
+                          : "—";
                     return (
-                      <TableRow key={c.id} className={c.scores?.rank === 1 ? "bg-amber-50" : ""}>
+                      <TableRow key={c.id} className={c.scores?.rank === 1 ? "bg-amber-50" : liveShortlistedIds.includes(c.id) ? "bg-green-50/50" : ""}>
                         <TableCell>
                           <span className="font-bold text-lg">
                             {c.scores?.rank != null ? `#${c.scores.rank}` : "—"}
@@ -827,6 +1330,15 @@ export default function JobDetailPage() {
                         </TableCell>
                         <TableCell>
                           <Link href={`/candidates/${c.id}`} className="font-medium hover:underline">{c.name}</Link>
+                        </TableCell>
+                        <TableCell className="font-mono text-sm">
+                          {assess?.result ? `${Math.round(assess.result.total_score)}/100` : "—"}
+                        </TableCell>
+                        <TableCell className="font-mono text-sm">
+                          {aiIv?.feedback ? `${aiIv.feedback.total_score}/100` : "—"}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className="text-[10px]">{roundLabel}</Badge>
                         </TableCell>
                         <ScoreCell entry={bd?.jd_match} label="JD Match" />
                         <ScoreCell entry={bd?.github} label="GitHub" />

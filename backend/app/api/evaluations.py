@@ -1,25 +1,19 @@
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException
 from app.supabase_repo import get_db
 from app.schemas.evaluation import EvaluationRequest, RankingResponse
-from app.services.evaluation_service import run_evaluation_pipeline
-from app.services.scoring_engine import compute_rankings
+from app.tasks.queue import enqueue_task
 
 router = APIRouter()
 
 
 @router.post("/run")
-async def run_evaluations(request: EvaluationRequest, background_tasks: BackgroundTasks):
-    background_tasks.add_task(run_evaluation_pipeline, request.job_id, request.candidate_ids)
-    return {"message": "Evaluation pipeline started", "job_id": request.job_id}
+def run_evaluations(request: EvaluationRequest):
+    return enqueue_task("run_evaluations", request.job_id, request.candidate_ids)
 
 
 @router.post("/rank")
-async def rank_candidates(job_id: str):
-    try:
-        rankings = await compute_rankings(job_id)
-        return rankings
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+def rank_candidates(job_id: str):
+    return enqueue_task("compute_rankings", job_id)
 
 
 @router.get("/rankings/{job_id}", response_model=RankingResponse)

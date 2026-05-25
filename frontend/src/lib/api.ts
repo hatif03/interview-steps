@@ -1,55 +1,215 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
+/** In dev, defaults to same-origin `/api` (proxied to FastAPI via next.config rewrites). */
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "/api";
 
-async function request<T>(path: string, options?: RequestInit, retries = 1): Promise<T> {
-  for (let attempt = 0; attempt <= retries; attempt++) {
+let tokenProvider: (() => Promise<string | null>) | null = null;
+
+export function setAuthTokenProvider(fn: () => Promise<string | null>) {
+  tokenProvider = null;
+  tokenProvider = fn;
+}
+
+async function getToken(): Promise<string | null> {
+  return tokenProvider ? tokenProvider() : null;
+}
+
+export class ApiError extends Error {
+  status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
+const REQUEST_TIMEOUT_MS = 30_000;
+const POLL_TIMEOUT_MS = 60_000;
+
+type RequestOptions = RequestInit & { timeoutMs?: number };
+
+function backendUnavailableMessage() {
+  return "Backend unavailable. Start the API server with: cd backend && uvicorn app.main:app --reload --port 8000";
+}
+
+function normalizeApiError(status: number, detail: unknown, statusText: string) {
+  const message =
+    typeof detail === "string"
+      ? detail
+      : detail != null
+        ? JSON.stringify(detail)
+        : statusText || `HTTP ${status}`;
+
+  if (
+    status === 500 ||
+    status === 502 ||
+    status === 503 ||
+    status === 504
+  ) {
+    if (
+      message === "Internal Server Error" ||
+      statusText === "Internal Server Error" ||
+      statusText === "Bad Gateway" ||
+      statusText === "Service Unavailable" ||
+      statusText === "Gateway Timeout"
+    ) {
+      return backendUnavailableMessage();
+    }
+  }
+
+  return message;
+}
+
+async function request<T>(
+  path: string,
+  options?: RequestOptions,
+  retries = 0
+): Promise<T> {
+  const { timeoutMs, ...fetchOptions } = options ?? {};
+  const method = (fetchOptions.method ?? "GET").toUpperCase();
+  const maxRetries = method === "GET" ? 0 : retries;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(
+      () => controller.abort(),
+      timeoutMs ?? REQUEST_TIMEOUT_MS
+    );
+
     try {
       const res = await fetch(`${API_BASE}${path}`, {
-        ...options,
+        ...fetchOptions,
+        signal: controller.signal,
         headers: {
           "Content-Type": "application/json",
-          ...options?.headers,
+          ...fetchOptions.headers,
         },
       });
       if (!res.ok) {
         const error = await res.json().catch(() => ({ detail: res.statusText }));
-        throw new Error(error.detail || `HTTP ${res.status}`);
+        throw new ApiError(
+          res.status,
+          normalizeApiError(res.status, error.detail, res.statusText)
+        );
       }
       return res.json();
     } catch (err) {
-      if (attempt < retries) {
+      if (attempt < maxRetries) {
         await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
         continue;
       }
+      if (err instanceof DOMException && err.name === "AbortError") {
+        throw new Error("Request timed out. Check that the backend is running.");
+      }
+      if (err instanceof TypeError) {
+        throw new Error(backendUnavailableMessage());
+      }
       throw err;
+    } finally {
+      clearTimeout(timeoutId);
     }
   }
   throw new Error("Request failed");
 }
 
+async function authRequest<T>(path: string, options?: RequestOptions, retries = 0): Promise<T> {
+  const token = await getToken();
+  return request<T>(
+    path,
+    {
+      ...options,
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...options?.headers,
+      },
+    },
+    retries
+  );
+}
+
+async function authFormRequest<T>(path: string, form: FormData): Promise<T> {
+  const token = await getToken();
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    body: form,
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(error.detail || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export const SCORING_PRESETS = {
+  technical: { jd_match: 0.20, github: 0.25, test_code: 0.30, test_la: 0.05, project_relevance: 0.10, research_relevance: 0.05, cgpa: 0.05 },
+  balanced: { jd_match: 0.25, github: 0.20, test_code: 0.20, test_la: 0.10, project_relevance: 0.10, research_relevance: 0.05, cgpa: 0.10 },
+  academic: { jd_match: 0.20, github: 0.10, test_code: 0.15, test_la: 0.15, project_relevance: 0.10, research_relevance: 0.10, cgpa: 0.20 },
+};
+
+export const DEFAULT_APPLY_FORM_CONFIG = {
+  fields: {
+    college: { required: true, enabled: true },
+    branch: { required: true, enabled: true },
+    cgpa: { required: false, enabled: true },
+    best_ai_project: { required: true, enabled: true },
+    research_work: { required: false, enabled: true },
+    github_url: { required: true, enabled: true },
+    resume_url: { required: true, enabled: true },
+  },
+};
+
+export interface TaskResponse {
+  task_id: string;
+  status: string;
+  backend?: "rq" | "thread";
+  message?: string;
+  result?: unknown;
+  error?: string | null;
+}
+
 export const api = {
   // Jobs
-  createJob: (data: { title: string; description: string; weight_config?: Record<string, number> }) =>
-    request("/jobs", { method: "POST", body: JSON.stringify(data) }),
-  listJobs: () => request<Job[]>("/jobs"),
-  getJob: (id: string) => request<Job>(`/jobs/${id}`),
-  updateJob: (id: string, data: { title: string; description: string; weight_config?: Record<string, number> }) =>
-    request(`/jobs/${id}`, { method: "PUT", body: JSON.stringify(data) }),
-  deleteJob: (id: string) => request(`/jobs/${id}`, { method: "DELETE" }),
+  createJob: (data: JobCreatePayload) =>
+    authRequest<Job>("/jobs", { method: "POST", body: JSON.stringify(data) }),
+  listJobs: () => authRequest<Job[]>("/jobs"),
+  getJob: (id: string) => authRequest<Job>(`/jobs/${id}`),
+  updateJob: (id: string, data: Partial<JobCreatePayload> & { regenerate_slug?: boolean }) =>
+    authRequest<Job>(`/jobs/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+  deleteJob: (id: string) => authRequest(`/jobs/${id}`, { method: "DELETE" }),
 
   // Candidates
-  uploadCandidates: (jobId: string, file: File) => {
+  uploadCandidates: async (jobId: string, file: File) => {
     const form = new FormData();
     form.append("file", file);
     form.append("job_id", jobId);
-    return fetch(`${API_BASE}/candidates/upload`, { method: "POST", body: form }).then((r) => r.json());
+    const token = await getToken();
+    const res = await fetch(`${API_BASE}/candidates/upload`, {
+      method: "POST",
+      body: form,
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) throw new Error("Upload failed");
+    return res.json();
   },
-  listCandidates: (params?: { job_id?: string; stage?: string; limit?: number; offset?: number }) => {
+  listCandidates: (params?: {
+    job_id?: string;
+    stage?: string;
+    limit?: number;
+    offset?: number;
+    summary?: boolean;
+    include_scores?: boolean;
+    timeoutMs?: number;
+  }) => {
     const query = new URLSearchParams();
     if (params?.job_id) query.set("job_id", params.job_id);
     if (params?.stage) query.set("stage", params.stage);
     if (params?.limit) query.set("limit", String(params.limit));
     if (params?.offset) query.set("offset", String(params.offset));
-    return request<{ candidates: Candidate[]; total: number }>(`/candidates?${query}`);
+    if (params?.summary) query.set("summary", "true");
+    if (params?.include_scores === false) query.set("include_scores", "false");
+    return request<{ candidates: Candidate[]; total: number }>(
+      `/candidates?${query}`,
+      { timeoutMs: params?.timeoutMs ?? (params?.summary ? POLL_TIMEOUT_MS : REQUEST_TIMEOUT_MS) }
+    );
   },
   getCandidate: (id: string) => request<Candidate>(`/candidates/${id}`),
   deleteCandidate: (id: string) => request(`/candidates/${id}`, { method: "DELETE" }),
@@ -57,29 +217,32 @@ export const api = {
   retryEvaluation: (id: string) => request(`/candidates/${id}/retry-evaluation`, { method: "POST" }),
   getPipelineSummary: (jobId: string) => request<PipelineSummary>(`/candidates/pipeline/summary?job_id=${jobId}`),
   processResumes: (jobId: string) =>
-    request(`/candidates/process-resumes?job_id=${jobId}`, { method: "POST" }),
+    request<TaskResponse>(`/candidates/process-resumes?job_id=${jobId}`, { method: "POST" }),
   analyzeGithub: (jobId: string) =>
-    request(`/candidates/analyze-github?job_id=${jobId}`, { method: "POST" }),
+    request<TaskResponse>(`/candidates/analyze-github?job_id=${jobId}`, { method: "POST" }),
 
   // Evaluations
   runEvaluations: (jobId: string, candidateIds?: string[]) =>
-    request("/evaluations/run", {
+    request<TaskResponse>("/evaluations/run", {
       method: "POST",
       body: JSON.stringify({ job_id: jobId, candidate_ids: candidateIds }),
     }),
   rankCandidates: (jobId: string) =>
-    request(`/evaluations/rank?job_id=${jobId}`, { method: "POST" }),
+    request<TaskResponse>(`/evaluations/rank?job_id=${jobId}`, { method: "POST" }),
+  getTaskStatus: (taskId: string) => request<TaskResponse>(`/tasks/${taskId}`),
   getRankings: (jobId: string) => request<RankingResponse>(`/evaluations/rankings/${jobId}`),
   getEvaluations: (jobId: string) => request<{ evaluations: Evaluation[]; total: number }>(`/evaluations/${jobId}`),
   getCandidateEvaluation: (candidateId: string) =>
     request<{ evaluation: Evaluation | null; score: Score | null }>(`/evaluations/candidate/${candidateId}`),
 
   // Tests
-  uploadTestResults: (jobId: string, file: File) => {
+  uploadTestResults: async (jobId: string, file: File) => {
     const form = new FormData();
     form.append("file", file);
     form.append("job_id", jobId);
-    return fetch(`${API_BASE}/tests/upload-results`, { method: "POST", body: form }).then((r) => r.json());
+    const res = await fetch(`${API_BASE}/tests/upload-results`, { method: "POST", body: form });
+    if (!res.ok) throw new Error("Upload failed");
+    return res.json();
   },
   getTestResults: (jobId: string) => request<{ results: TestResult[]; total: number }>(`/tests/results/${jobId}`),
 
@@ -104,13 +267,155 @@ export const api = {
 
   // Auth
   registerUser: (data: { uid: string; email: string; name: string; role: string }) =>
-    request("/auth/register", { method: "POST", body: JSON.stringify(data) }),
+    request("/auth/register", { method: "POST", body: JSON.stringify(data) }, 1),
   getMe: (token: string) =>
     request<AppUser>("/auth/me", { headers: { Authorization: `Bearer ${token}` } }),
   linkCandidate: (token: string) =>
     request("/auth/link-candidate", { method: "POST", headers: { Authorization: `Bearer ${token}` } }),
 
-  // Mock interviews
+  getRecruiterProfile: (token?: string) =>
+    token
+      ? request<RecruiterProfile>("/auth/recruiter-profile", { headers: { Authorization: `Bearer ${token}` } })
+      : authRequest<RecruiterProfile>("/auth/recruiter-profile"),
+  updateRecruiterProfile: (data: Partial<RecruiterProfile>, token?: string) =>
+    token
+      ? request<RecruiterProfile>("/auth/recruiter-profile", {
+          method: "PUT",
+          body: JSON.stringify(data),
+          headers: { Authorization: `Bearer ${token}` },
+        })
+      : authRequest<RecruiterProfile>("/auth/recruiter-profile", { method: "PUT", body: JSON.stringify(data) }),
+
+  getCandidateProfile: (token?: string) =>
+    token
+      ? request<CandidateProfile>("/auth/candidate-profile", { headers: { Authorization: `Bearer ${token}` } })
+      : authRequest<CandidateProfile>("/auth/candidate-profile"),
+  updateCandidateProfile: (data: Partial<CandidateProfile>, token?: string) =>
+    token
+      ? request<CandidateProfile>("/auth/candidate-profile", {
+          method: "PUT",
+          body: JSON.stringify(data),
+          headers: { Authorization: `Bearer ${token}` },
+        })
+      : authRequest<CandidateProfile>("/auth/candidate-profile", { method: "PUT", body: JSON.stringify(data) }),
+  /** Upload resume PDF to Supabase, extract text server-side, return autofill hints. */
+  uploadResume: async (file: File) => {
+    const token = await getToken();
+    const form = new FormData();
+    form.append("file", file);
+    const res = await fetch(`${API_BASE}/auth/parse-resume`, {
+      method: "POST",
+      body: form,
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({ detail: res.statusText }));
+      const detail = error.detail;
+      throw new ApiError(res.status, typeof detail === "string" ? detail : JSON.stringify(detail));
+    }
+    return res.json() as Promise<ResumeParseResult>;
+  },
+  /** Fetch a remote resume PDF (e.g. Google Drive) and regex-extract fields. */
+  extractResumeFromUrl: async (resume_url: string) => {
+    const token = await getToken();
+    const form = new FormData();
+    form.append("resume_url", resume_url.trim());
+    const res = await fetch(`${API_BASE}/auth/parse-resume`, {
+      method: "POST",
+      body: form,
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({ detail: res.statusText }));
+      const detail = error.detail;
+      throw new ApiError(res.status, typeof detail === "string" ? detail : JSON.stringify(detail));
+    }
+    return res.json() as Promise<ResumeParseResult>;
+  },
+
+  // Public
+  getPublicJob: (slug: string) => request<PublicJob>(`/public/jobs/${slug}`),
+  applyToJob: (slug: string, data: ApplyFormPayload) =>
+    authRequest<{ success: boolean; candidate_id: string; job_title: string }>(
+      `/public/jobs/${slug}/apply`,
+      { method: "POST", body: JSON.stringify(data) }
+    ),
+
+  // Candidate portal
+  getMyApplications: () => authRequest<{ applications: Application[]; total: number }>("/candidate/applications"),
+  getApplicationRounds: (candidateId: string) =>
+    authRequest<ApplicationRoundsResponse>(`/candidate/applications/${candidateId}/rounds`),
+  getMyInterviews: () => authRequest<{ interviews: ScheduledInterview[]; total: number }>("/candidate/interviews"),
+  getMyAssessments: () => authRequest<{ assignments: AssessmentAssignment[]; total: number }>("/candidate/assessments"),
+
+  // Platform assessments
+  getJobAssessment: (jobId: string) => authRequest<{ assessment: JobAssessment | null }>(`/assessments/job/${jobId}`),
+  createJobAssessment: (jobId: string, data: Partial<JobAssessment>) =>
+    authRequest<{ assessment: JobAssessment }>(`/assessments/job/${jobId}`, { method: "POST", body: JSON.stringify(data) }),
+  updateAssessment: (assessmentId: string, data: Partial<JobAssessment>) =>
+    authRequest<{ assessment: JobAssessment }>(`/assessments/${assessmentId}`, { method: "PUT", body: JSON.stringify(data) }),
+  generateAssessmentQuestions: (assessmentId: string, topicHints?: string) =>
+    authRequest<{ assessment: JobAssessment }>(`/assessments/${assessmentId}/generate`, {
+      method: "POST",
+      body: JSON.stringify({ topic_hints: topicHints }),
+    }),
+  addAssessmentQuestion: (assessmentId: string, data: Partial<AssessmentQuestion>) =>
+    authRequest<{ question: AssessmentQuestion }>(`/assessments/${assessmentId}/questions`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  updateAssessmentQuestion: (questionId: string, data: Partial<AssessmentQuestion>) =>
+    authRequest<{ question: AssessmentQuestion }>(`/assessments/questions/${questionId}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+  deleteAssessmentQuestion: (questionId: string) =>
+    authRequest(`/assessments/questions/${questionId}`, { method: "DELETE" }),
+  assignAssessment: (data: { job_id: string; candidate_ids: string[]; send_email?: boolean }) =>
+    authRequest("/assessments/assign", { method: "POST", body: JSON.stringify(data) }),
+  getAssessmentResults: (jobId: string) =>
+    authRequest<{ results: AssessmentAssignment[] }>(`/assessments/results/${jobId}`),
+  shortlistAssessment: (data: { job_id: string; outcomes: Record<string, string>; send_email?: boolean }) =>
+    authRequest("/assessments/shortlist", { method: "POST", body: JSON.stringify(data) }),
+  getAssessmentShortlisted: (jobId: string) =>
+    authRequest<{ candidate_ids: string[] }>(`/assessments/shortlisted/${jobId}`),
+  getLiveShortlisted: (jobId: string) =>
+    authRequest<{ candidate_ids: string[] }>(`/assessments/live-shortlisted/${jobId}`),
+  getAiInterviewResults: (jobId: string) =>
+    authRequest<{ results: AiInterviewResult[] }>(`/assessments/ai-interview-results/${jobId}`),
+  getAssessmentAssignment: (assignmentId: string) =>
+    authRequest<AssessmentAssignment>(`/assessments/assignments/${assignmentId}`),
+  startAssessmentAssignment: (assignmentId: string) =>
+    authRequest<AssessmentAssignment>(`/assessments/assignments/${assignmentId}/start`, { method: "POST" }),
+  submitAssessment: (assignmentId: string, data: { answers: Array<{ question_id: string; response: Record<string, unknown> }>; sql_results?: Record<string, Record<string, unknown>> }) =>
+    authRequest<AssessmentAssignment>(`/assessments/assignments/${assignmentId}/submit`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  shortlistAiInterview: (data: { job_id: string; outcomes: Record<string, string>; send_email?: boolean }) =>
+    authRequest("/assessments/ai-interview/shortlist", { method: "POST", body: JSON.stringify(data) }),
+  getRoundSummary: (jobId: string) =>
+    authRequest<RoundSummary>(`/assessments/round-summary/${jobId}`, { timeoutMs: POLL_TIMEOUT_MS }),
+  remindRound: (data: { job_id: string; round_type: string; source_ids?: string[] }) =>
+    authRequest("/assessments/remind", { method: "POST", body: JSON.stringify(data) }),
+  closeRound: (data: { job_id: string; round_type: string }) =>
+    authRequest("/assessments/close-round", { method: "POST", body: JSON.stringify(data) }),
+  rerankJob: (jobId: string) =>
+    authRequest<TaskResponse>("/assessments/rerank", { method: "POST", body: JSON.stringify({ job_id: jobId }) }),
+  advanceToNextRound: (data: {
+    job_id: string;
+    round_type: string;
+    source_ids?: string[];
+    top_n?: number;
+    send_email?: boolean;
+    auto_assign?: boolean;
+  }) => authRequest("/assessments/advance", { method: "POST", body: JSON.stringify(data) }),
+  rejectFromRound: (data: { job_id: string; round_type: string; source_ids: string[] }) =>
+    authRequest("/assessments/reject", { method: "POST", body: JSON.stringify(data) }),
+  sendInterviewEmails: (jobId: string, candidateIds: string[]) =>
+    request(`/interviews/send-interview-emails?job_id=${encodeURIComponent(jobId)}&${candidateIds.map((id) => `candidate_ids=${encodeURIComponent(id)}`).join("&")}`, { method: "POST" }),
+
+  // Automated AI interviews (legacy API path)
   assignMockInterview: (data: {
     job_id: string;
     candidate_ids: string[];
@@ -142,9 +447,28 @@ export const api = {
     ),
   getMockFeedback: (interviewId: string) =>
     request<MockFeedback>(`/mock-interviews/feedback/${interviewId}`),
+  getMockFeedbackOptional: async (interviewId: string) => {
+    try {
+      return await request<MockFeedback>(`/mock-interviews/feedback/${interviewId}`);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) return null;
+      throw err;
+    }
+  },
 };
 
 // Types
+export interface JobCreatePayload {
+  title: string;
+  description: string;
+  weight_config?: Record<string, number>;
+  apply_enabled?: boolean;
+  apply_form_config?: Record<string, unknown>;
+  status?: string;
+  location?: string;
+  job_type?: string;
+}
+
 export interface Job {
   id: string;
   title: string;
@@ -152,6 +476,200 @@ export interface Job {
   weight_config: Record<string, number>;
   created_at: string;
   candidate_count?: number;
+  recruiter_id?: string;
+  apply_slug?: string;
+  apply_enabled?: boolean;
+  apply_form_config?: Record<string, unknown>;
+  status?: string;
+  location?: string;
+  job_type?: string;
+  company_name?: string;
+}
+
+export interface PublicJob {
+  slug: string;
+  title: string;
+  description: string;
+  location?: string;
+  job_type?: string;
+  company_name?: string;
+  apply_form_config?: Record<string, unknown>;
+  status?: string;
+}
+
+export interface ApplyFormPayload {
+  college?: string;
+  branch?: string;
+  cgpa?: number;
+  best_ai_project?: string;
+  research_work?: string;
+  github_url?: string;
+  resume_url?: string;
+}
+
+export interface RecruiterProfile {
+  user_id: string;
+  company_name?: string;
+  company_size?: string;
+  industry?: string;
+  website?: string;
+  job_title?: string;
+  hiring_volume?: string;
+  email_notifications?: boolean;
+  default_scoring_preset?: string;
+  onboarding_completed?: boolean;
+}
+
+export interface CandidateProfile {
+  user_id: string;
+  phone?: string;
+  location?: string;
+  college?: string;
+  branch?: string;
+  graduation_year?: number;
+  cgpa?: number;
+  github_url?: string;
+  linkedin_url?: string;
+  skills?: string[];
+  best_ai_project?: string;
+  research_work?: string;
+  resume_url?: string;
+  resume_text?: string;
+  onboarding_completed?: boolean;
+}
+
+export interface ResumeParseResult {
+  resume_text: string;
+  resume_url?: string;
+  extracted: Partial<{
+    phone: string;
+    location: string;
+    college: string;
+    branch: string;
+    graduation_year: number;
+    cgpa: number;
+    github_url: string;
+    linkedin_url: string;
+    skills: string[];
+    best_ai_project: string;
+    research_work: string;
+  }>;
+}
+
+export interface Application {
+  candidate_id: string;
+  job_id: string;
+  job_title: string;
+  company_name?: string;
+  pipeline_stage: string;
+  status_message?: string;
+  source: string;
+  applied_at: string;
+  composite_score?: number;
+  rank?: number;
+  current_round?: string;
+  latest_outcome?: string;
+  is_eliminated?: boolean;
+  elimination_message?: string | null;
+}
+
+export interface HiringRound {
+  id: string;
+  candidate_id: string;
+  job_id: string;
+  round_type: string;
+  attempt_number: number;
+  reference_id?: string;
+  status: string;
+  outcome: string;
+  total_score?: number;
+  review_summary?: Record<string, unknown>;
+  email_sent: boolean;
+  created_at: string;
+  completed_at?: string;
+  detail?: Record<string, unknown>;
+}
+
+export interface ApplicationRoundsResponse {
+  candidate_id: string;
+  job_id: string;
+  job_title: string;
+  pipeline_stage: string;
+  status_message?: string;
+  is_eliminated?: boolean;
+  elimination_message?: string | null;
+  rounds: HiringRound[];
+}
+
+export interface JobAssessment {
+  id: string;
+  job_id: string;
+  title: string;
+  duration_minutes: number;
+  config: { mcq?: number; dsa?: number; sql?: number; passing_score?: number };
+  status: "draft" | "published";
+  questions?: AssessmentQuestion[];
+  created_at?: string;
+}
+
+export interface AssessmentQuestion {
+  id: string;
+  assessment_id: string;
+  type: "mcq" | "dsa" | "sql";
+  order_index: number;
+  prompt: string;
+  options: string[];
+  correct_answer?: Record<string, unknown>;
+  starter_code?: string;
+  metadata?: Record<string, unknown>;
+  source: string;
+}
+
+export interface AssessmentResult {
+  id: string;
+  assignment_id: string;
+  total_score: number;
+  section_scores: Record<string, number>;
+  outcome: "pending" | "shortlisted" | "not_shortlisted";
+  review?: {
+    strengths?: string[];
+    areas_for_improvement?: string[];
+    future_suggestions?: string[];
+    summary?: string;
+  };
+  graded_at?: string;
+}
+
+export interface AssessmentAssignment {
+  id: string;
+  assessment_id: string;
+  candidate_id: string;
+  job_id: string;
+  attempt_number: number;
+  status: string;
+  assigned_at: string;
+  started_at?: string;
+  submitted_at?: string;
+  assessment?: JobAssessment;
+  questions?: AssessmentQuestion[];
+  answers?: Array<Record<string, unknown>>;
+  result?: AssessmentResult;
+  job_title?: string;
+  candidate?: Candidate;
+  is_eliminated?: boolean;
+  can_take?: boolean;
+}
+
+export interface ScheduledInterview {
+  id: string;
+  candidate_id: string;
+  job_id: string;
+  scheduled_at: string;
+  duration_minutes: number;
+  google_meet_link?: string;
+  status: string;
+  job_title?: string;
+  candidate_name?: string;
 }
 
 export interface Candidate {
@@ -170,6 +688,8 @@ export interface Candidate {
   resume_text?: string;
   pipeline_stage: string;
   status_message?: string | null;
+  source?: string;
+  applied_at?: string;
   created_at: string;
   scores?: Score | null;
 }
@@ -251,6 +771,49 @@ export interface AppUser {
   role: "recruiter" | "candidate";
 }
 
+export interface AiInterviewResult {
+  id: string;
+  job_id: string;
+  candidate_id: string;
+  role: string;
+  type: string;
+  level: string;
+  attempt_number?: number;
+  created_at: string;
+  feedback?: MockFeedback | null;
+  outcome?: string | null;
+  candidate?: Candidate;
+}
+
+export interface RoundStats {
+  total: number;
+  not_started: number;
+  in_progress: number;
+  graded?: number;
+  completed?: number;
+  awaiting_decision: number;
+  shortlisted: number;
+  not_shortlisted: number;
+}
+
+export interface AiInterviewPending {
+  candidate_id: string;
+  candidate?: Candidate | null;
+}
+
+export interface RoundSummary {
+  job_id: string;
+  assessment: (JobAssessment & { round_status?: string }) | null;
+  ai_interview_round_status: string;
+  assessment_stats: RoundStats;
+  ai_stats: RoundStats;
+  assignments: AssessmentAssignment[];
+  ai_interviews: AiInterviewResult[];
+  ai_interviews_pending?: AiInterviewPending[];
+  assessment_shortlisted_ids: string[];
+  live_shortlisted_ids: string[];
+}
+
 export interface MockInterview {
   id: string;
   job_id: string;
@@ -263,6 +826,9 @@ export interface MockInterview {
   finalized: boolean;
   created_at: string;
   feedback?: MockFeedback | null;
+  outcome?: string | null;
+  is_eliminated?: boolean;
+  can_take?: boolean;
 }
 
 export interface MockFeedback {
@@ -275,3 +841,30 @@ export interface MockFeedback {
   final_assessment: string;
   created_at: string;
 }
+
+export const STAGE_LABELS: Record<string, string> = {
+  uploaded: "Application received",
+  resume_processed: "Resume reviewed",
+  evaluating: "Under AI evaluation",
+  evaluated: "Evaluation complete",
+  ranked: "Ranked in pool",
+  assessment_assigned: "Platform assessment assigned",
+  assessment_completed: "Platform assessment completed",
+  test_sent: "Legacy assessment sent",
+  test_completed: "Legacy assessment completed",
+  shortlisted: "Shortlisted",
+  ai_interview_assigned: "Automated AI interview assigned",
+  ai_interview_completed: "Automated AI interview done",
+  mock_interview_assigned: "Automated AI interview assigned",
+  mock_interview_completed: "Automated AI interview done",
+  interview_scheduled: "Live interview scheduled",
+  not_advanced: "Application closed",
+  error: "Needs attention",
+};
+
+export const ROUND_TYPE_LABELS: Record<string, string> = {
+  platform_test: "Platform Assessment",
+  ai_interview: "Automated AI Interview",
+  live_interview: "Live Interview",
+  legacy_test: "External Assessment",
+};

@@ -1,13 +1,11 @@
 import io
 import re
 import logging
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form, BackgroundTasks
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 import pandas as pd
 from app.supabase_repo import get_db
 from app.schemas.candidate import CandidateResponse, CandidateListResponse, PipelineStageUpdate
-from app.services.resume_service import process_resumes_for_job, process_single_resume
-from app.services.github_service import analyze_github_for_job
-from app.services.evaluation_service import run_evaluation_pipeline
+from app.tasks.queue import enqueue_task
 
 logger = logging.getLogger(__name__)
 
@@ -19,19 +17,32 @@ PIPELINE_STAGES = [
     "evaluating",
     "evaluated",
     "ranked",
+    "assessment_assigned",
+    "assessment_completed",
     "test_sent",
     "test_completed",
     "shortlisted",
+    "ai_interview_assigned",
+    "ai_interview_completed",
     "mock_interview_assigned",
     "mock_interview_completed",
     "interview_scheduled",
     "error",
 ]
 
+# Exclude resume_text — can be megabytes per candidate and is not needed for list views.
+CANDIDATE_LIST_COLUMNS = (
+    "id,job_id,s_no,name,email,college,branch,cgpa,best_ai_project,research_work,"
+    "github_url,resume_url,pipeline_stage,status_message,user_id,created_at"
+)
+
+CANDIDATE_STATUS_COLUMNS = (
+    "id,job_id,name,email,pipeline_stage,status_message,created_at"
+)
+
 
 @router.post("/upload")
 async def upload_candidates(
-    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     job_id: str = Form(...),
 ):
@@ -162,21 +173,24 @@ async def upload_candidates(
                 logger.info(f"Inserted test scores for {candidate_data['name']}: {test_entry}")
 
     logger.info(f"Created {len(candidates_created)} candidates, {test_inserted} with test scores")
-    background_tasks.add_task(process_resumes_for_job, job_id)
+    task = enqueue_task("process_resumes", job_id)
 
     return {
         "message": f"Uploaded {len(candidates_created)} candidates",
         "count": len(candidates_created),
         "job_id": job_id,
+        **task,
     }
 
 
 @router.get("", response_model=CandidateListResponse)
-async def list_candidates(
+def list_candidates(
     job_id: str = None,
     stage: str = None,
     limit: int = 100,
     offset: int = 0,
+    summary: bool = False,
+    include_scores: bool = True,
 ):
     db = get_db()
     filters = []
@@ -184,25 +198,41 @@ async def list_candidates(
         filters.append(("job_id", "eq", job_id))
     if stage:
         filters.append(("pipeline_stage", "eq", stage))
-    result = db.query("candidates", filters=filters or None, order_by="created_at", limit=limit, offset=offset)
+    result = db.query(
+        "candidates",
+        columns=CANDIDATE_STATUS_COLUMNS if summary else CANDIDATE_LIST_COLUMNS,
+        filters=filters or None,
+        order_by="created_at",
+        limit=limit,
+        offset=offset,
+    )
 
-    candidate_ids = [row["id"] for row in result.data]
-    scores_map = db.get_candidate_with_scores(candidate_ids)
+    scores_map: dict[str, dict] = {}
+    if include_scores and result.data:
+        candidate_ids = [row["id"] for row in result.data]
+        scores_map = db.get_candidate_with_scores(candidate_ids)
 
     candidates = []
     for row in result.data:
-        row["scores"] = scores_map.get(row["id"])
+        row["scores"] = scores_map.get(row["id"]) if include_scores else None
         candidates.append(CandidateResponse(**row))
 
     return CandidateListResponse(candidates=candidates, total=result.count or len(candidates))
 
 
 @router.get("/pipeline/summary")
-async def pipeline_summary(job_id: str):
+def pipeline_summary(job_id: str):
     db = get_db()
-    summary = {}
-    for stage in PIPELINE_STAGES:
-        summary[stage] = db.count("candidates", filters=[("job_id", "eq", job_id), ("pipeline_stage", "eq", stage)])
+    rows = db.query(
+        "candidates",
+        columns="pipeline_stage",
+        filters=[("job_id", "eq", job_id)],
+    )
+    summary = {stage: 0 for stage in PIPELINE_STAGES}
+    for row in rows.data:
+        stage = row.get("pipeline_stage")
+        if stage in summary:
+            summary[stage] += 1
     return {"job_id": job_id, "stages": summary}
 
 
@@ -217,53 +247,31 @@ async def update_pipeline_stage(update: PipelineStageUpdate):
 
 
 @router.post("/process-resumes")
-async def trigger_resume_processing(job_id: str, background_tasks: BackgroundTasks):
-    background_tasks.add_task(process_resumes_for_job, job_id)
-    return {"message": "Resume processing started"}
+def trigger_resume_processing(job_id: str):
+    return enqueue_task("process_resumes", job_id)
 
 
 @router.post("/analyze-github")
-async def trigger_github_analysis(job_id: str, background_tasks: BackgroundTasks):
-    background_tasks.add_task(analyze_github_for_job, job_id)
-    return {"message": "GitHub analysis started"}
+def trigger_github_analysis(job_id: str):
+    return enqueue_task("analyze_github", job_id)
 
 
 @router.post("/{candidate_id}/retry-resume")
-async def retry_resume(candidate_id: str, background_tasks: BackgroundTasks):
+def retry_resume(candidate_id: str):
     db = get_db()
     result = db.get_by_id("candidates", candidate_id)
     if not result.data:
         raise HTTPException(status_code=404, detail="Candidate not found")
-    candidate = result.data[0]
-
-    async def _retry():
-        try:
-            db.update("candidates", candidate_id, {
-                "pipeline_stage": "uploaded",
-                "status_message": "Retrying resume processing...",
-            })
-            updates = await process_single_resume(candidate)
-            db.update("candidates", candidate_id, updates)
-        except Exception as e:
-            db.update("candidates", candidate_id, {
-                "pipeline_stage": "error",
-                "status_message": f"Resume retry failed: {e}",
-            })
-
-    background_tasks.add_task(_retry)
-    return {"message": "Resume retry started"}
+    return enqueue_task("retry_resume", candidate_id)
 
 
 @router.post("/{candidate_id}/retry-evaluation")
-async def retry_evaluation(candidate_id: str, background_tasks: BackgroundTasks):
+def retry_evaluation(candidate_id: str):
     db = get_db()
     result = db.get_by_id("candidates", candidate_id)
     if not result.data:
         raise HTTPException(status_code=404, detail="Candidate not found")
-    candidate = result.data[0]
-
-    background_tasks.add_task(run_evaluation_pipeline, candidate["job_id"], [candidate_id])
-    return {"message": "Evaluation retry started"}
+    return enqueue_task("retry_evaluation", candidate_id)
 
 
 @router.delete("/{candidate_id}")

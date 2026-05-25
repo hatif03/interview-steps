@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     backend_url: str = "http://localhost:8000"
     test_link_base_url: str = "https://example.com/test"
 
+    redis_url: str = ""
+    task_job_timeout_seconds: int = 1800
+
     class Config:
         env_file = ".env"
         extra = "ignore"

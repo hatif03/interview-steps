@@ -1,5 +1,5 @@
 fastapi==0.115.12
-uvicorn[standard]==0.34.2
+uvicorn[standard]==0.47.0
 python-multipart==0.0.20
 pydantic==2.11.1
 pydantic-settings==2.8.1
@@ -18,3 +18,6 @@ google-auth>=2.48.1
 google-auth-oauthlib>=1.2.1
 Jinja2==3.1.6
 aiofiles==24.1.0
+pytest==8.3.5
+redis==5.2.1
+rq==2.1.0

@@ -299,7 +299,7 @@ export default function CandidateDetailPage() {
       {mockInterviews.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle>Mock Interviews</CardTitle>
+            <CardTitle>Automated AI Interviews</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             {mockInterviews.map((iv) => (
@@ -323,6 +323,28 @@ export default function CandidateDetailPage() {
                           <span className="font-mono">{cat.score}</span>
                         </div>
                       ))}
+                    </div>
+                    <div className="flex gap-2 pt-2">
+                      <Button size="sm" className="h-7 text-xs" onClick={async () => {
+                        await api.shortlistAiInterview({
+                          job_id: candidate!.job_id,
+                          interview_ids: [iv.id],
+                          outcomes: { [iv.id]: "shortlisted" },
+                          send_email: true,
+                        });
+                        toast.success("Advanced to live interview pool");
+                        window.location.reload();
+                      }}>→ Live Interview</Button>
+                      <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={async () => {
+                        await api.shortlistAiInterview({
+                          job_id: candidate!.job_id,
+                          interview_ids: [iv.id],
+                          outcomes: { [iv.id]: "not_shortlisted" },
+                          send_email: false,
+                        });
+                        toast.success("Marked not advanced");
+                        window.location.reload();
+                      }}>Reject</Button>
                     </div>
                   </>
                 )}
